@@ -77,17 +77,31 @@
 
 (ktn-define-e2e-test ktn-previous-candidate/test1
   "JSON辞書を用いたxでの前候補への戻りテスト。"
-  (okuri-nasi-entries ("かんじ" . ["漢字" "幹事"]))
   (actions #'ktn-mode
            "K a n j i SPC x C-j")
   (expected-buffer-string "幹事"))
 
 ;; (ktn-define-e2e-test ktn-kutouten-henkan/test1
 ;;   "JSON辞書を用いたでの句読点で変換開始。"
-;;   (okuri-nasi-entries ("かんじ" . ["漢字" "幹事"]))
 ;;   (actions #'ktn-mode
 ;;            "K a n j i . C-j")
 ;;   (expected-buffer-string "漢字。"))
+
+(ktn-define-e2e-test recursive-dict-registration/test1
+  "未知の複合語登録時に再帰的な辞書登録を行える。"
+  (actions #'ktn-mode
+           ;; 1. 「さいきてき」を入力して変換（SPC）→ 辞書にないため「さいきてき」の登録モードへ
+           "S a i k i t e k i SPC"
+           ;; 2. さらに「さいき」を入力して変換（SPC）→ 「さいき」もないため再帰的な登録モードへ
+           "S a i k i SPC"
+           ;; 3. 「さい」と「き」をそれぞれ変換して「再帰」を作り、C-c C-c で「さいき」の登録を完了させる
+           "S a i SPC K i SPC C-c C-c"
+           ;; 4. 親の「さいきてき」の登録モードに戻り、「さいき」を変換（再帰）させ、
+           ;;    「てき」は既存の辞書（的）から引いて「さいきてき」を完成させる
+           "T e k i SPC"
+           ;; 5. 最終的な確定操作
+           "C-j C-c C-c")
+  (expected-buffer-string "再帰的"))
 
 (ktn-define-e2e-test ktn-mode-off/test1
   "もう一度呼ぶとKTNモードを切れる。"

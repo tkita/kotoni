@@ -785,32 +785,32 @@ Prioritize personal stats, then system dictionaries."
     (ktn--close-candidate-window)))
 
 (defun ktn--prompt-dict-registration ()
-  "Prompt user in minibuffer to register a new word for current headword/okuri."
-  (let* ((midasi (if (not (string-empty-p ktn-okuri-roma-first))
+  "Prompt user in minibuffer to register a new word for current headword/okuri,
+supporting recursive minibuffer input and sub-registrations."
+  (let* ((enable-recursive-minibuffers t) ; ← ミニバッファのネスト（再帰）を許可する
+         (midasi (if (not (string-empty-p ktn-okuri-roma-first))
                      (concat ktn-headword-buffer ktn-okuri-roma-first)
                    ktn-headword-buffer))
          (display-label (concat ktn-headword-buffer ktn-okuri-buffer))
          (user-word
           (minibuffer-with-setup-hook
               (lambda ()
-                (use-local-map (let ((map (make-sparse-keymap (current-local-map))))
-                                 (define-key map (kbd "C-c C-c") #'exit-minibuffer)
-                                 map)))
-            (read-string (format "[辞書登録] '%s' に対する単語を入力 (完了は C-c C-c): "
-                                 display-label)))))
+                (local-set-key (kbd "C-g") #'abort-recursive-edit)
+                (local-set-key (kbd "C-c C-c") (lambda ()
+                                                 (interactive)
+                                                 (when (active-minibuffer-window)
+                                                   (exit-minibuffer)))))
+            (read-from-minibuffer (format "[辞書登録] '%s' に対する単語を入力 (完了は C-c C-c): "
+                                         display-label)))))
     (if (and user-word (not (string-empty-p user-word)))
         (let ((pos (and (markerp ktn-headword-start-marker)
                         (marker-position ktn-headword-start-marker))))
-          ;; 1. 統計情報（個人辞書）に登録して保存
           (ktn--register-word midasi user-word)
-          ;; 2. オーバーレイ等をクリーンアップ
           (ktn--cleanup-headword)
-          ;; 3. 元の位置に登録した単語を挿入
           (when pos
             (goto-char pos)
             (insert user-word))
           (message "新しい単語を辞書に登録しました: [%s] -> %s" midasi user-word))
-      ;; キャンセルされた場合
       (ktn-quit))))
 
 ;;;###autoload
