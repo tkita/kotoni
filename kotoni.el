@@ -453,7 +453,7 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defvar-local ktn--completion-base nil
   "Base headword string before completion started.")
 
-(defvar ktn-okuri-roma-first ""
+(defvar-local ktn-okuri-roma-first ""
   "Buffer storing the first romaji character of okurigana.")
 
 (defvar ktn-mode-map
