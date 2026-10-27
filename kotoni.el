@@ -223,12 +223,9 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
                 (setq data (json-parse-buffer :object-type 'hash-table))
                 (setf (ktn-dictionary-data dict) data)))
             (let* ((section (cond
-                             (is-okuri (or (gethash "okuri_ari" data)
-                                           (gethash "okuri_nasi" data)
-                                           data))
-                             (t (or (gethash "okuri_nasi" data)
-                                    data))))
-                   (raw-cands (and section (gethash midasi section))))
+                             (is-okuri (gethash "okuri_ari" data))
+                             (t (or (gethash "okuri_nasi" data) data))))
+                   (raw-cands (and section (hash-table-p section) (gethash midasi section))))
               (when raw-cands
                 (ktn--parse-candidate-items raw-cands))))
         ;; --- 従来のテキスト辞書の検索処理 ---
