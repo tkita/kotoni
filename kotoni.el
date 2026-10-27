@@ -153,9 +153,9 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   (let ((table nil))
     (dolist (elt ktn-user-roma-table)
       (push elt table))
-    (dolist (elt ktn-default-roma-table)
-      (unless (assoc (car elt) ktn-user-roma-table)
-        (push elt table)))
+    (cl-loop for elt in ktn-default-roma-table
+             unless (assoc (car elt) ktn-user-roma-table)
+             do (push elt table))
     (setq ktn-roma-table (nreverse table))))
 
 (defcustom ktn-user-roma-table nil
@@ -534,60 +534,44 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 
 (defun ktn--show-candidates-window ()
   "Display candidate items in a dedicated popup window at the bottom of the frame."
-  (if (eq ktn-state 'converting)
-      (let* ((total (length ktn-candidates))
-             (page-size (length ktn-select-keys))
-             (current-page (/ ktn-candidate-index page-size))
-             (start (* current-page page-size))
-             (end (min total (+ start page-size)))
-             (parts '()))
-        
-        ;; 候補リストの作成
-        (let ((i start))
-          (while (< i end)
-            (let* ((cand-cell (nth i ktn-candidates))
-                   (c-str (car cand-cell))
-                   (annot (cdr cand-cell))
-                   (key-char (nth (- i start) ktn-select-keys))
-                   (display-str (if (and annot (not (string-empty-p annot)))
-                                    (concat c-str ";" annot)
-                                  c-str))
-                   ;; 白背景・下線付きの数字インデックス
-                   (key-str (propertize (format " %c " key-char) 'face 'ktn-index-face))
-                   (formatted (concat key-str " " display-str)))
-              (if (= i ktn-candidate-index)
-                  (push (propertize formatted 'face 'ktn-selected-face) parts)
-                (push formatted parts)))
-            (setq i (1+ i))))
-        
-        ;; 1. バッファを取得し、先にウィンドウを表示・確定させる
-        (let* ((buf (ktn--get-or-create-candidate-buffer))
-               (win (display-buffer buf)))
-          
-          ;; 2. 確定したウィンドウの幅をもとに右寄せ用のパディングを計算
-          (let* ((win-width (if (window-live-p win) (window-width win) (frame-width)))
-                 (page-str (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
-                 ;; 折り返しを防ぐため少し余裕（-2）を持たせて右端へ寄せる
-                 (padding (max 0 (- win-width (string-width page-str) 2)))
-                 (right-aligned-page (concat (make-string padding ?\s) page-str))
-                 
-                 ;; 候補一覧と右寄せページ情報を結合
-                 (content (concat (mapconcat #'identity (nreverse parts) "\n")
-                                  (if (> total page-size) (concat "\n" right-aligned-page) ""))))
-            
-            ;; 3. 正しい内容をバッファに書き込む
-            (with-current-buffer buf
-              (let ((inhibit-read-only t))
-                (erase-buffer)
-                (insert content)))
-            
-            ;; 4. ウィンドウの高さを内容に合わせて再調整
-            (when (window-live-p win)
-              (with-selected-window win
-                (fit-window-to-buffer win))))))
-    
-    ;; 変換中でなければウィンドウを閉じる
-    (ktn--close-candidate-window)))
+  (if (not (eq ktn-state 'converting))
+      (ktn--close-candidate-window)
+    (let* ((total (length ktn-candidates))
+           (page-size (length ktn-select-keys))
+           (current-page (/ ktn-candidate-index page-size))
+           (start (* current-page page-size))
+           (end (min total (+ start page-size)))
+           (parts nil))
+      (cl-loop for i from start below end
+               for cand-cell = (nth i ktn-candidates)
+               for c-str = (car cand-cell)
+               for annot = (cdr cand-cell)
+               for key-char = (nth (- i start) ktn-select-keys)
+               for display-str = (if (and annot (not (string-empty-p annot)))
+                                     (concat c-str ";" annot)
+                                   c-str)
+               for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
+               for formatted = (concat key-str " " display-str)
+               do
+               (push (if (= i ktn-candidate-index)
+                         (propertize formatted 'face 'ktn-selected-face)
+                       formatted)
+                     parts))
+      (let* ((buf (ktn--get-or-create-candidate-buffer))
+             (win (display-buffer buf)))
+        (let* ((win-width (if (window-live-p win) (window-width win) (frame-width)))
+               (page-str (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
+               (padding (max 0 (- win-width (string-width page-str) 2)))
+               (right-aligned-page (concat (make-string padding ?\s) page-str))
+               (content (concat (mapconcat #'identity (nreverse parts) "\n")
+                                (if (> total page-size) (concat "\n" right-aligned-page) ""))))
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert content)))
+          (when (window-live-p win)
+            (with-selected-window win
+              (fit-window-to-buffer win))))))))
 
 (defun ktn-next-page ()
   "Jump to the next page of candidates in converting mode."
