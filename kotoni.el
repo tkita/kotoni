@@ -1018,8 +1018,6 @@ When candidates run out, transition to dictionary registration mode."
           (message "辞書に登録・更新しました: [%s] -> %s" midasi text)))
 
       (ktn--cleanup-headword)
-      (when (not (eq ktn-state 'converting))
-        (message ""))
       (when pos
         (goto-char pos)
         (insert text)))))
