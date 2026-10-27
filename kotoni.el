@@ -14,7 +14,6 @@
 ;;   (add-to-list 'load-path "/path/to/kotoni")
 ;;   (setq ktn-user-roma-table '(("z," . "‥") ("z." . "…")))
 ;;   (setq ktn-jisyo-file "/usr/share/skk/SKK-JISYO.L.json")
-;;   (setq ktn-user-jisyo-file (expand-file-name "~/skk-user-jisyo"))
 ;;   (require 'kotoni)
 ;;   (global-set-key (kbd "C-x C-j") #'ktn-mode)
 
