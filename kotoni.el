@@ -976,18 +976,11 @@ When candidates run out, transition to dictionary registration mode."
   "Select previous candidate in converting (▼) mode."
   (interactive)
   (if (eq ktn-state 'converting)
-      (if (> ktn-candidate-index 0)
-          (progn
-            (setq ktn-candidate-index (1- ktn-candidate-index))
-            (ktn--update-inline-display)
-            (ktn--show-candidates-window))
-        ;; 最初の候補で x を押した場合は ▽ モードに戻る
-        (setq ktn-state 'headword
-              ktn-candidates nil
-              ktn-candidate-index 0)
+      (let ((total (length ktn-candidates)))
+        ;; 先頭なら末尾へループさせる場合
+        (setq ktn-candidate-index (mod (1- ktn-candidate-index) total))
         (ktn--update-inline-display)
-        ;; (message "Quit conversion, back to ▽ mode")
-        )
+        (ktn--show-candidates-window))
     (ktn-insert)))
 
 ;;;###autoload
