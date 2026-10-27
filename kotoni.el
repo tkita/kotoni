@@ -356,6 +356,19 @@ If a JSON parse error occurs, show the error details in a dedicated popup window
         t))))
 
 ;; ウィンドウ管理
+(defvar-local ktn--saved-cursor-color nil)
+
+(defun ktn--set-cursor-red ()
+  (setq ktn--saved-cursor-color
+        (or ktn--saved-cursor-color
+            (frame-parameter nil 'cursor-color)
+            (face-attribute 'cursor :background)))
+  (set-cursor-color "red"))
+
+(defun ktn--unset-cursor-red ()
+  (when ktn--saved-cursor-color
+    (set-cursor-color ktn--saved-cursor-color)
+    (setq ktn--saved-cursor-color nil)))
 
 ;; 隠しバッファ: バッファ名の先頭にスペースを入れると、バッファ一覧（C-x b など）に表示されない
 (defconst ktn-candidate-buffer-name " *ktn-candidates*"
@@ -1154,9 +1167,12 @@ When candidates run out, transition to dictionary registration mode."
   :lighter ktn-lighter
   :global nil
   :keymap ktn-mode-map
-  (when ktn-mode
-    (ktn-setup))
-  (ktn--cleanup-headword)
+  (if ktn-mode
+      (progn
+        (ktn-setup)
+        (ktn--set-cursor-red))
+    (ktn--unset-cursor-red)
+    (ktn--cleanup-headword))
   (setq ktn-lighter (if ktn-mode ktn-indicator ""))
   ;; (message (if ktn-mode "Ktn mode ON" "Ktn mode OFF"))
   (force-mode-line-update))
