@@ -45,6 +45,9 @@
   :group 'ktn)
 
 ;;; 個人辞書（統計情報）の設定とデータ構造
+(defvar ktn--stats-loaded-p nil
+  "Non-nil when personal statistics have been loaded into memory.")
+
 (defcustom ktn-stats-file (expand-file-name "~/.jisyo.json")
   "Path to JSON file storing user conversion statistics."
   :type 'file)
@@ -316,41 +319,31 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
     (append (nreverse stat-candidates) (nreverse system-candidates))))
 
 (defun ktn--load-stats ()
-  "Load ktn stats from ~/.jisyo.json safely into `ktn--stats-data`.
-If a JSON parse error occurs, show the error details in a dedicated popup window."
-  (let ((jisyo-path (expand-file-name "~/.jisyo.json")))
-    (if (file-exists-p jisyo-path)
-        (condition-case err
-            (progn
-              (with-temp-buffer
-                (insert-file-contents jisyo-path)
-                (setq ktn--stats-data (json-parse-buffer :object-type 'hash-table)))
-              t)
-          (json-parse-error
-           (let* ((error-desc (error-message-string err)) ; エラー内容の文字列を確実に取得
-                  (line (nth 2 err))
-                  (col (nth 3 err))
-                  (err-msg (format "[Kotoni JSONパースエラー]\n\nファイル: %s\nエラー詳細: %s\n発生位置: 行 %s, 列 %s\n\n~/.jisyo.json の構文を確認してください。"
-                                   jisyo-path error-desc line col)))
-             (with-current-buffer (get-buffer-create "*ktn-error*")
-               (let ((inhibit-read-only t))
-                 (erase-buffer)
-                 (insert err-msg)))
-             (pop-to-buffer "*ktn-error*")
+  "Load ktn stats from ~/.jisyo.json safely into `ktn--stats-data`."
+  (when (or (not ktn--stats-loaded-p)
+            (null ktn--stats-data)
+            (not (hash-table-p ktn--stats-data)))
+    (let ((jisyo-path (or ktn-stats-file (expand-file-name "~/.jisyo.json"))))
+      (if (and jisyo-path (file-exists-p jisyo-path))
+          (condition-case err
+              (progn
+                (with-temp-buffer
+                  (insert-file-contents jisyo-path)
+                  (if (= (buffer-size) 0)
+                      (setq ktn--stats-data (make-hash-table :test 'equal))
+                    (setq ktn--stats-data (json-parse-buffer :object-type 'hash-table))))
+                (unless (hash-table-p ktn--stats-data)
+                  (setq ktn--stats-data (make-hash-table :test 'equal)))
+                (setq ktn--stats-loaded-p t)
+                t)
+            (error
              (setq ktn--stats-data (make-hash-table :test 'equal))
-             nil))
-          (error
-           (let ((err-msg (format "[Kotoni 読み込みエラー]\n\nファイル: %s\n詳細: %s" jisyo-path err)))
-             (with-current-buffer (get-buffer-create "*ktn-error*")
-               (let ((inhibit-read-only t))
-                 (erase-buffer)
-                 (insert err-msg)))
-             (pop-to-buffer "*ktn-error*")
-             (setq ktn--stats-data (make-hash-table :test 'equal))
-             nil)))
-      (progn
+             (setq ktn--stats-loaded-p t)
+             t))
         (setq ktn--stats-data (make-hash-table :test 'equal))
-        t))))
+        (setq ktn--stats-loaded-p t)
+        t)))
+  t)
 
 ;; ウィンドウ管理
 (defvar-local ktn--saved-cursor-color nil)
@@ -415,9 +408,8 @@ If a JSON parse error occurs, show the error details in a dedicated popup window
 
   ;; 3. 統計情報のロード（失敗時は ktn-mode の有効化を中止）
   (if (ktn--load-stats)
-      (progn
-        (add-hook 'kill-emacs-hook #'ktn-save-stats)
-        t)
+      (unless (memq #'ktn-save-stats kill-emacs-hook)
+        (add-hook 'kill-emacs-hook #'ktn-save-stats))
     (setq ktn-mode nil)
     (message "ktn-mode activation aborted due to dictionary load/parse error.")
     nil))
