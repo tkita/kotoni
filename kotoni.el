@@ -460,6 +460,9 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defvar-local ktn--completion-base nil
   "Base headword string before completion started.")
 
+(defvar-local ktn--completion-tab-count 0
+  "Count of TAB presses in the current completion session for the buffer.")
+
 (defvar-local ktn-okuri-roma-first ""
   "Buffer storing the first romaji character of okurigana.")
 
@@ -515,24 +518,66 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
         ktn-candidates nil
         ktn-candidate-index 0))
 
+(defface ktn-completion-preview-face
+  '((t (:foreground "#777777")))
+  "Face for dynamic completion inline preview (pale/dim color)."
+  :group 'ktn)
+
 (defun ktn--update-inline-display ()
-  "Update the headword overlay at `ktn-headword-start-marker`."
-  (when (markerp ktn-headword-start-marker)
-    (unless (and ktn-headword-overlay (overlay-buffer ktn-headword-overlay))
-      (setq ktn-headword-overlay (make-overlay ktn-headword-start-marker ktn-headword-start-marker))
-      (overlay-put ktn-headword-overlay 'window (selected-window)))
-    (move-overlay ktn-headword-overlay ktn-headword-start-marker ktn-headword-start-marker)
-    (let* ((prefix (if (eq ktn-state 'converting) "▼" "▽"))
-           (body (cond
-                  ((eq ktn-state 'converting)
-                   (car (nth ktn-candidate-index ktn-candidates)))
-                  (t
-                   (concat ktn-headword-buffer ktn-roma-buffer
-                           (unless (string-empty-p ktn-okuri-roma-first) "*")
-                           ktn-okuri-buffer ktn-okuri-roma-buffer)))))
-      (overlay-put ktn-headword-overlay 'before-string
-                   (propertize (concat prefix body)
-                               'face 'ktn-headword-face)))))
+  "Update the inline overlay to display current input or conversion candidate."
+  (if (not (memq ktn-state '(headword converting)))
+      (when (overlayp ktn-headword-overlay)
+        (delete-overlay ktn-headword-overlay)
+        (setq ktn-headword-overlay nil))
+
+    ;; オーバーレイがなければ作成
+    (unless (and (overlayp ktn-headword-overlay)
+                 (overlay-buffer ktn-headword-overlay))
+      (let ((pos (point)))
+        (setq ktn-headword-overlay (make-overlay pos pos nil t t))))
+
+    ;; カーソル位置に合わせる
+    (move-overlay ktn-headword-overlay (point) (point))
+
+    (cond
+     ;; --- 1. ▽ 見出し語入力中モード ---
+     ((eq ktn-state 'headword)
+      (let* ((input-str (concat ktn-headword-buffer ktn-roma-buffer
+                                (unless (string-empty-p ktn-okuri-roma-first) "*")
+                                ktn-okuri-buffer ktn-okuri-roma-buffer))
+             (display-headword (concat "▽" input-str))
+             ;; 動的補完プレビューの取得
+             (preview-suffix (ktn--get-current-completion-suffix)))
+
+        (if (and preview-suffix (not (string-empty-p preview-suffix)))
+            ;; プレビューがある場合：入力文字を下線付き、プレビューをプレビュー用フェイスで表示
+            (progn
+              (overlay-put ktn-headword-overlay 'before-string
+                           (propertize display-headword 'face 'ktn-headword-face))
+              (overlay-put ktn-headword-overlay 'after-string
+                           (propertize preview-suffix
+                                       'face 'ktn-completion-preview-face
+                                       'cursor t)))
+          ;; プレビューがない場合：通常の見出し語表示
+          (overlay-put ktn-headword-overlay 'before-string
+                       (propertize display-headword 'face 'ktn-headword-face))
+          (overlay-put ktn-headword-overlay 'after-string nil))))
+
+     ;; --- 2. ▼ 漢字変換中・候補選択モード ---
+     ((eq ktn-state 'converting)
+      (let* ((cand (nth ktn-candidate-index ktn-candidates))
+             ;; どんなデータ構造（文字列、コンスセル、入れ子リスト）であっても漢字文字列を安全に取り出す
+             (cand-str (cond
+                        ((stringp cand) cand)
+                        ((consp cand) (or (car cand) (format "%s" cand)))
+                        ((listp cand) (format "%s" (car cand)))
+                        (t (format "%s" cand))))
+             (display-str (concat "▼" cand-str)))
+
+        (overlay-put ktn-headword-overlay 'before-string
+                     (propertize display-str 'face 'ktn-headword-face))
+        ;; 変換中はプレビュー用の after-string は不要なのでクリア
+        (overlay-put ktn-headword-overlay 'after-string nil))))))
 
 (defface ktn-index-face
   '((t (:background "white" :foreground "black" :underline t)))
@@ -710,35 +755,69 @@ Prioritize personal stats, then system dictionaries."
           (message "補完候補が見つかりません: %s" ktn-headword-buffer)))
     (call-interactively #'indent-for-tab-command)))
 
+(defun ktn--get-current-completion-suffix ()
+  "現在表示されている動的補完のサフィックス文字列を返す。"
+  (let ((current-input (concat ktn-headword-buffer ktn-roma-buffer
+                               (unless (string-empty-p ktn-okuri-roma-first) "*")
+                               ktn-okuri-buffer ktn-okuri-roma-buffer)))
+    (when (and (eq ktn-state 'headword)
+               (string-empty-p ktn-okuri-roma-first)
+               (not (string-empty-p current-input)))
+      (when (or (null ktn--completion-cands)
+                (null ktn--completion-base)
+                (not (string-prefix-p ktn--completion-base current-input)))
+        (setq ktn--completion-base current-input
+              ktn--completion-cands (ktn--complete-search-headword current-input)
+              ktn--completion-index 0))
+      (when ktn--completion-cands
+        (let ((first-cand (nth ktn--completion-index ktn--completion-cands)))
+          (when (and first-cand (string-prefix-p current-input first-cand))
+            (substring first-cand (length current-input))))))))
+
 (defun ktn-complete-headword ()
-  "Complete current headword in ▽ mode using TAB."
+  "Complete current headword in ▽ mode using TAB.
+1st TAB: Commit/cycle completion inline without showing candidates window.
+2nd and subsequent TABs: Show *ktn-candidates* window."
   (interactive)
   (if (eq ktn-state 'headword)
       (progn
-        ;; 未確定のローマ字があれば、先にかなに変換
+        ;; 未確定のローマ字があればヘッドワードバッファに結合
         (unless (string-empty-p ktn-roma-buffer)
           (setq ktn-headword-buffer (concat ktn-headword-buffer ktn-roma-buffer)
                 ktn-roma-buffer ""))
-        
+
         ;; 新しい補完セッションの開始判定
-        (when (or (null ktn--completion-cands)
-                  (null ktn--completion-base)
-                  (not (string-prefix-p ktn--completion-base ktn-headword-buffer)))
-          (setq ktn--completion-base ktn-headword-buffer
-                ktn--completion-cands (ktn--complete-search-headword ktn-headword-buffer)
-                ktn--completion-index 0))
-        
-        (if ktn--completion-cands
-            (let ((completed-midasi (nth ktn--completion-index ktn--completion-cands)))
-              (setq ktn-headword-buffer completed-midasi
-                    ktn--completion-index (mod (1+ ktn--completion-index)
-                                               (length ktn--completion-cands)))
-              (ktn--update-inline-display)
-              ;; 補完候補一覧ウィンドウを表示
-              (ktn--show-completions-window))
-          (ktn--close-candidate-window)
-          (message "補完候補が見つかりません: %s" ktn-headword-buffer)))
-    ;; ▽モードでなければ通常のTAB入力へ
+        (let ((is-new-session (or (null ktn--completion-cands)
+                                  (null ktn--completion-base)
+                                  (not (string-prefix-p ktn--completion-base ktn-headword-buffer)))))
+          (if is-new-session
+              (setq ktn--completion-base ktn-headword-buffer
+                    ktn--completion-cands (ktn--complete-search-headword ktn-headword-buffer)
+                    ktn--completion-index 0
+                    ;; 新規セッション時は打鍵カウントをリセット
+                    ktn--completion-tab-count 0))
+
+          (if ktn--completion-cands
+              (let ((completed-midasi (nth ktn--completion-index ktn--completion-cands)))
+                ;; 打鍵カウントを進める（1発目=1, 2発目=2...）
+                (setq ktn--completion-tab-count (1+ (or ktn--completion-tab-count 0)))
+
+                ;; 見出し語バッファを更新
+                (setq ktn-headword-buffer completed-midasi
+                      ktn-roma-buffer ""
+                      ktn--completion-index (mod (1+ ktn--completion-index)
+                                                 (length ktn--completion-cands)))
+
+                ;; インライン表示の更新
+                (ktn--update-inline-display)
+
+                ;; ★ 肝心な制御: 2発目以降の TAB 打鍵でのみ候補ウィンドウを表示する
+                (if (>= ktn--completion-tab-count 2)
+                    (ktn--show-completions-window)
+                  (ktn--close-candidate-window)))
+
+            (ktn--close-candidate-window)
+            (message "補完候補が見つかりません: %s" ktn-headword-buffer))))
     (call-interactively #'indent-for-tab-command)))
 
 (defun ktn--show-completions-window ()
@@ -785,11 +864,11 @@ Prioritize personal stats, then system dictionaries."
 
 (defun ktn--reset-completion ()
   "Reset headword completion state and close completion window."
-  (when ktn--completion-cands
-    (setq ktn--completion-cands nil
-          ktn--completion-index 0
-          ktn--completion-base nil)
-    (ktn--close-candidate-window)))
+  (setq ktn--completion-cands nil
+        ktn--completion-index 0
+        ktn--completion-base nil
+        ktn--completion-tab-count 0)
+  (ktn--close-candidate-window))
 
 (defun ktn--prompt-dict-registration ()
   "Prompt user in minibuffer to register a new word for current headword/okuri,
