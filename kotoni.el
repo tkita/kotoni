@@ -44,6 +44,13 @@
   :type 'file
   :group 'ktn)
 
+(defcustom ktn-show-candidates-nth-henkan 3
+  "何回目のスペース打鍵で候補一覧バッファを表示するか"
+  :type 'integer
+  :group 'kotoni)
+
+(defvar-local ktn-henkan-count 0)
+
 ;;; 個人辞書（統計情報）の設定とデータ構造
 (defvar ktn--stats-loaded-p nil
   "Non-nil when personal statistics have been loaded into memory.")
@@ -920,20 +927,24 @@ When candidates run out, transition to dictionary registration mode."
           (progn
             (setq ktn-state 'converting
                   ktn-candidates cands
-                  ktn-candidate-index 0)
+                  ktn-candidate-index 0
+                  ktn-henkan-count 0)
             (ktn--update-inline-display)
-            (ktn--show-candidates-window))
+            ;; (ktn--show-candidates-window) ; 1発目で開くとウザい
+            )
         ;; 辞書に最初からヒットしない場合 -> 辞書登録モードへ
         (ktn--prompt-dict-registration))))
 
    ;; 2. ▼ 変換候補選択中（SPCで次候補へ進む）
    ((eq ktn-state 'converting)
+    (setq ktn-henkan-count (1+ ktn-henkan-count))
     (let ((total (length ktn-candidates)))
       (if (< (1+ ktn-candidate-index) total)
           (progn
             (setq ktn-candidate-index (1+ ktn-candidate-index))
             (ktn--update-inline-display)
-            (ktn--show-candidates-window))
+            (when (>= ktn-henkan-count 2)
+              (ktn--show-candidates-window)))
         ;; 候補を全て出し切った状態でさらに SPC を押した場合 -> 辞書登録モードへ
         (ktn--prompt-dict-registration))))
 
