@@ -54,6 +54,99 @@
 (defvar-local ktn--last-was-upper nil
   "Non-nil if the previous character entered was an uppercase letter.")
 
+;;; ====================================================================
+;;; ktn-hassamu: バッファローカル辞書
+;;; ====================================================================
+
+(defvar-local ktn--hassamu-candidates nil
+  "ktn-hassamu で抽出・保持している漢字文字列のリスト（バッファローカル）。")
+
+(defvar-local ktn--hassamu-current-matches nil
+  "現在前方一致で絞り込まれている候補のリスト。")
+
+(defvar-local ktn--hassamu-active-p nil
+  "現在 ktn-hassamu の補完セッション中かどうかを示すフラグ。")
+
+(defvar-local ktn--hassamu-start-marker nil
+  "ktn-hassamu のプレビューが始まったバッファ位置を指すマーカー。")
+
+;;;###autoload
+(defun ktn-hassamu ()
+  "カレントバッファ全体 (point-min から point-max) から漢字文字列を抽出し、バッファローカルなリストに保持する。
+漢字文字列とは、漢字で始まり、漢字以外の文字（改行を除く）が来るまでの間の文字列で、少なくとも漢字3文字以上とする。"
+  (interactive)
+  (let (candidates)
+    (save-excursion
+      (goto-char (point-min))
+      ;; 改行を一時的に削除して結合（改行を跨ぐ連続に対応）
+      (let ((content (buffer-substring-no-properties (point-min) (point-max))))
+        (let ((clean-content (replace-regexp-in-string "[\r\n]+" "" content)))
+          (with-temp-buffer
+            (insert clean-content)
+            (goto-char (point-min))
+            ;; 漢字3文字以上で始まり、その直後に「漢字以外の文字」が来るまでの文字列を抽出する
+            ;; 構造: 漢字3文字以上の連続 ＋ (漢字以外の文字 または 文末)
+            (while (re-search-forward "\\([一-龥]\\{3,\\}\\)[^一-龥]" nil t)
+              (let ((match-str (match-string 1)))
+                (when match-str
+                  (push match-str candidates))))))))
+
+    (setq ktn--hassamu-candidates (delete-dups (nreverse candidates))
+          ktn--hassamu-active-p nil
+          ktn--hassamu-current-matches nil)
+    (when (markerp ktn--hassamu-start-marker)
+      (set-marker ktn--hassamu-start-marker nil))
+    (message "ktn-hassamu: %d件の漢字文字列を記憶しました。" (length ktn--hassamu-candidates))))
+
+(defun ktn--hassamu-update-display ()
+  "ktn-hassamu のアクティブ時に、最初の候補をインラインプレビューとして表示する。"
+  (if (and ktn--hassamu-active-p ktn--hassamu-current-matches)
+      (let ((target (car ktn--hassamu-current-matches)))
+        (unless (and (overlayp ktn-headword-overlay)
+                     (overlay-buffer ktn-headword-overlay))
+          (let ((pos (point)))
+            (setq ktn-headword-overlay (make-overlay pos pos nil t t))))
+        (move-overlay ktn-headword-overlay (point) (point))
+        (overlay-put ktn-headword-overlay 'before-string nil)
+        (overlay-put ktn-headword-overlay 'after-string
+                     (propertize (concat "→ " target)
+                                 'face 'ktn-completion-preview-face
+                                 'cursor t)))
+    (when (overlayp ktn-headword-overlay)
+      (delete-overlay ktn-headword-overlay)
+      (setq ktn-headword-overlay nil))))
+
+(defun ktn--hassamu-on-kakutei (confirmed-text)
+  "確定文字列 CONFIRMED-TEXT をキーにリストを前方一致検索し、マッチすればセッションを開始する。"
+  (if ktn--hassamu-candidates
+      (let ((matches (cl-remove-if-not (lambda (item)
+                                         (string-prefix-p confirmed-text item))
+                                       ktn--hassamu-candidates)))
+        (if matches
+            (progn
+              (setq ktn--hassamu-active-p t
+                    ktn--hassamu-current-matches matches)
+              (setq ktn--hassamu-start-marker
+                    (set-marker (or ktn--hassamu-start-marker (make-marker))
+                                (- (point) (length confirmed-text))))
+              (ktn--hassamu-update-display))
+          (setq ktn--hassamu-active-p nil
+                ktn--hassamu-current-matches nil)
+          (when (markerp ktn--hassamu-start-marker)
+            (set-marker ktn--hassamu-start-marker nil))
+          (ktn--hassamu-update-display)))
+    (setq ktn--hassamu-active-p nil
+          ktn--hassamu-current-matches nil)
+    (ktn--hassamu-update-display)))
+
+(defun ktn--hassamu-abort ()
+  "ktn-hassamu のセッションを強制終了し、プレビューとマーカーを片付ける。"
+  (setq ktn--hassamu-active-p nil
+        ktn--hassamu-current-matches nil)
+  (when (markerp ktn--hassamu-start-marker)
+    (set-marker ktn--hassamu-start-marker nil))
+  (ktn--hassamu-update-display))
+
 ;;; 個人辞書（統計情報）の設定とデータ構造
 (defvar ktn--stats-loaded-p nil
   "Non-nil when personal statistics have been loaded into memory.")
@@ -530,9 +623,11 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defun ktn--update-inline-display ()
   "Update the inline overlay to display current input or conversion candidate."
   (if (not (memq ktn-state '(headword converting)))
-      (when (overlayp ktn-headword-overlay)
-        (delete-overlay ktn-headword-overlay)
-        (setq ktn-headword-overlay nil))
+      (progn
+        (when (overlayp ktn-headword-overlay)
+          (delete-overlay ktn-headword-overlay)
+          (setq ktn-headword-overlay nil))
+        (ktn--hassamu-update-display))
 
     ;; オーバーレイがなければ作成
     (unless (and (overlayp ktn-headword-overlay)
@@ -632,6 +727,7 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defun ktn-next-page ()
   "Jump to the next page of candidates in converting mode."
   (interactive)
+  (ktn--hassamu-abort)
   (if (eq ktn-state 'converting)
       (let* ((total (length ktn-candidates))
              (page-size (length ktn-select-keys))
@@ -646,6 +742,7 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defun ktn-prev-page ()
   "Jump to the previous page of candidates in converting mode."
   (interactive)
+  (ktn--hassamu-abort)
   (if (eq ktn-state 'converting)
       (let* ((total (length ktn-candidates))
              (page-size (length ktn-select-keys))
@@ -732,6 +829,7 @@ Prioritize personal stats, then system dictionaries."
 (defun ktn-complete-headword-backward ()
   "Cycle through headword completion candidates in reverse order using Shift-TAB."
   (interactive)
+  (ktn--hassamu-abort)
   (if (eq ktn-state 'headword)
       (progn
         (unless (string-empty-p ktn-roma-buffer)
@@ -783,46 +881,62 @@ Prioritize personal stats, then system dictionaries."
 1st TAB: Commit/cycle completion inline without showing candidates window.
 2nd and subsequent TABs: Show *ktn-candidates* window."
   (interactive)
-  (if (eq ktn-state 'headword)
-      (progn
-        ;; 未確定のローマ字があればヘッドワードバッファに結合
-        (unless (string-empty-p ktn-roma-buffer)
-          (setq ktn-headword-buffer (concat ktn-headword-buffer ktn-roma-buffer)
-                ktn-roma-buffer ""))
+  ;; ktn-hassamu セッション中の TAB 打鍵
+  (if ktn--hassamu-active-p
+      (let ((target (car ktn--hassamu-current-matches))
+            (start-pos (and (markerp ktn--hassamu-start-marker)
+                            (marker-position ktn--hassamu-start-marker)))
+            (end-pos (point)))
+        (ktn--hassamu-abort)
+        (when target
+          (if (and start-pos end-pos (> end-pos start-pos))
+              (progn
+                (delete-region start-pos end-pos)
+                (insert target))
+            (insert target))
+          (message "ktn-hassamu: '%s' を挿入しました。" target)))
 
-        ;; 新しい補完セッションの開始判定
-        (let ((is-new-session (or (null ktn--completion-cands)
-                                  (null ktn--completion-base)
-                                  (not (string-prefix-p ktn--completion-base ktn-headword-buffer)))))
-          (if is-new-session
-              (setq ktn--completion-base ktn-headword-buffer
-                    ktn--completion-cands (ktn--complete-search-headword ktn-headword-buffer)
-                    ktn--completion-index 0
-                    ;; 新規セッション時は打鍵カウントをリセット
-                    ktn--completion-tab-count 0))
+    ;; 従来の ▽ モード用 TAB 補完
+    (if (eq ktn-state 'headword)
+        (progn
+          ;; 未確定のローマ字があればヘッドワードバッファに結合
+          (unless (string-empty-p ktn-roma-buffer)
+            (setq ktn-headword-buffer (concat ktn-headword-buffer ktn-roma-buffer)
+                  ktn-roma-buffer ""))
 
-          (if ktn--completion-cands
-              (let ((completed-midasi (nth ktn--completion-index ktn--completion-cands)))
-                ;; 打鍵カウントを進める（1発目=1, 2発目=2...）
-                (setq ktn--completion-tab-count (1+ (or ktn--completion-tab-count 0)))
+          ;; 新しい補完セッションの開始判定
+          (let ((is-new-session (or (null ktn--completion-cands)
+                                    (null ktn--completion-base)
+                                    (not (string-prefix-p ktn--completion-base ktn-headword-buffer)))))
+            (if is-new-session
+                (setq ktn--completion-base ktn-headword-buffer
+                      ktn--completion-cands (ktn--complete-search-headword ktn-headword-buffer)
+                      ktn--completion-index 0
+                      ;; 新規セッション時は打鍵カウントをリセット
+                      ktn--completion-tab-count 0))
 
-                ;; 見出し語バッファを更新
-                (setq ktn-headword-buffer completed-midasi
-                      ktn-roma-buffer ""
-                      ktn--completion-index (mod (1+ ktn--completion-index)
-                                                 (length ktn--completion-cands)))
+            (if ktn--completion-cands
+                (let ((completed-midasi (nth ktn--completion-index ktn--completion-cands)))
+                  ;; 打鍵カウントを進める（1発目=1, 2発目=2...）
+                  (setq ktn--completion-tab-count (1+ (or ktn--completion-tab-count 0)))
 
-                ;; インライン表示の更新
-                (ktn--update-inline-display)
+                  ;; 見出し語バッファを更新
+                  (setq ktn-headword-buffer completed-midasi
+                        ktn-roma-buffer ""
+                        ktn--completion-index (mod (1+ ktn--completion-index)
+                                                   (length ktn--completion-cands)))
 
-                ;; ★ 肝心な制御: 2発目以降の TAB 打鍵でのみ候補ウィンドウを表示する
-                (if (>= ktn--completion-tab-count 2)
-                    (ktn--show-completions-window)
-                  (ktn--close-candidate-window)))
+                  ;; インライン表示の更新
+                  (ktn--update-inline-display)
 
-            (ktn--close-candidate-window)
-            (message "補完候補が見つかりません: %s" ktn-headword-buffer))))
-    (call-interactively #'indent-for-tab-command)))
+                  ;; ★ 肝心な制御: 2発目以降の TAB 打鍵でのみ候補ウィンドウを表示する
+                  (if (>= ktn--completion-tab-count 2)
+                      (ktn--show-completions-window)
+                    (ktn--close-candidate-window)))
+
+              (ktn--close-candidate-window)
+              (message "補完候補が見つかりません: %s" ktn-headword-buffer))))
+      (call-interactively #'indent-for-tab-command))))
 
 (defun ktn--show-completions-window ()
   "Display completion candidates in the candidate buffer/window (max 7 items per page)."
@@ -877,6 +991,7 @@ Prioritize personal stats, then system dictionaries."
 (defun ktn--prompt-dict-registration ()
   "Prompt user in minibuffer to register a new word for current headword/okuri,
 supporting recursive minibuffer input and sub-registrations."
+  (ktn--hassamu-abort)
   (let* ((enable-recursive-minibuffers t) ; ← ミニバッファのネスト（再帰）を許可する
          (midasi (if (not (string-empty-p ktn-okuri-roma-first))
                      (concat ktn-headword-buffer ktn-okuri-roma-first)
@@ -907,6 +1022,7 @@ supporting recursive minibuffer input and sub-registrations."
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."
   (interactive)
+  (ktn--hassamu-abort)
   (cond
    ;; 1. ▼ 変換候補選択中なら ▽ 見出し語入力状態に戻る
    ((eq ktn-state 'converting)
@@ -936,6 +1052,7 @@ supporting recursive minibuffer input and sub-registrations."
 (defun ktn-backspace ()
   "Delete a character from romaji buffer or headword buffer in ▽ mode."
   (interactive)
+  (ktn--hassamu-abort)
   (ktn--reset-completion)
   (cond
    ;; ▼ 変換候補選択中なら C-g と同様に ▽ モードに戻す
@@ -988,6 +1105,7 @@ supporting recursive minibuffer input and sub-registrations."
   "Start conversion or cycle through candidates with SPC.
 When candidates run out, transition to dictionary registration mode."
   (interactive)
+  (ktn--hassamu-abort)
   (cond
    ;; 1. ▽ モードでの変換開始
    ((eq ktn-state 'headword)
@@ -1053,6 +1171,7 @@ When candidates run out, transition to dictionary registration mode."
 (defun ktn-prev-candidate ()
   "Select previous candidate in converting (▼) mode."
   (interactive)
+  (ktn--hassamu-abort)
   (if (eq ktn-state 'converting)
       (let ((total (length ktn-candidates)))
         ;; 先頭なら末尾へループさせる場合
@@ -1065,6 +1184,10 @@ When candidates run out, transition to dictionary registration mode."
 (defun ktn-kakutei ()
   "Commit current headword or conversion result and insert into buffer."
   (interactive)
+
+  ;; ▼ 確定の瞬間に、もし直前まで ktn-hassamu セッション中であれば一度きれいに片付ける
+  (ktn--hassamu-abort)
+
   (when ktn-state
     (let* (;; 送りありの場合は key に okuri-first-roma を含める
            (midasi (if (not (string-empty-p ktn-okuri-roma-first))
@@ -1093,12 +1216,14 @@ When candidates run out, transition to dictionary registration mode."
       (ktn--cleanup-headword)
       (when pos
         (goto-char pos)
-        (insert text)))))
+        (insert text))
+      (ktn--hassamu-on-kakutei text) )))
 
 ;;;###autoload
 (defun ktn-kakutei-and-newline ()
   "Commit current input and insert a newline."
   (interactive)
+  (ktn--hassamu-abort)
   (when ktn-state
     (ktn-kakutei))
   (newline))
@@ -1108,6 +1233,7 @@ When candidates run out, transition to dictionary registration mode."
   "Insert router supporting normal and headword input modes."
   (interactive)
   (barf-if-buffer-read-only)
+  (ktn--hassamu-abort)
   (let* ((ch last-command-event)
          (raw-is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
          (is-alpha-char (and (characterp ch)
@@ -1215,6 +1341,7 @@ When candidates run out, transition to dictionary registration mode."
 (defun ktn-katakana-convert ()
   "Convert current headword in ▽ mode to Katakana and commit."
   (interactive)
+  (ktn--hassamu-abort)
   (if (eq ktn-state 'headword)
       (let ((kata-text (ktn--hiragana-to-katakana
                         (concat ktn-headword-buffer
@@ -1241,7 +1368,8 @@ When candidates run out, transition to dictionary registration mode."
         (ktn-setup)
         (ktn--set-cursor-red))
     (ktn--unset-cursor-red)
-    (ktn--cleanup-headword))
+    (ktn--cleanup-headword)
+    (ktn--hassamu-abort))
   (setq ktn-lighter (if ktn-mode ktn-indicator ""))
   ;; (message (if ktn-mode "Ktn mode ON" "Ktn mode OFF"))
   (force-mode-line-update))
