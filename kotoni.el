@@ -202,7 +202,7 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
                     (gethash "candidates" items)
                     (gethash "cands" items)
                     items)))
-  (let ((result '()))
+  (let (result)
     (dolist (item (cond
                    ((vectorp items) (append items nil))
                    ((listp items) items)
@@ -269,12 +269,12 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defun ktn-search-jisyo-combined (midasi &optional is-okuri)
   "Search MIDASI. Prioritize personal stats (frequency order), then system dictionaries."
   (let ((seen (make-hash-table :test 'equal))
-        (result '()))
+        result)
     
     ;; A. 統計情報（個人辞書）からの候補取得・回数順ソート
     (let ((cands-hash (gethash midasi ktn--stats-data)))
       (when (and cands-hash (hash-table-p cands-hash))
-        (let ((stat-list '()))
+        (let (stat-list)
           (maphash (lambda (word count)
                      (push (cons word count) stat-list))
                    cands-hash)
@@ -299,13 +299,13 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   "Search okuri-ari candidates, prioritizing personal stats."
   (let* ((search-key (concat midasi okuri-first-roma))
          (seen (make-hash-table :test 'equal))
-         (stat-candidates '())
-         (system-candidates '()))
+         stat-candidates
+         system-candidates)
     
     ;; 1. 統計情報（個人辞書）から送りあり用の統計を取得
     (let ((cands-hash (gethash search-key ktn--stats-data)))
       (when (and cands-hash (hash-table-p cands-hash))
-        (let ((lst '()))
+        (let (lst)
           (maphash (lambda (word count)
                      (push (cons word count) lst))
                    cands-hash)
@@ -690,8 +690,8 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   "Search JSON dictionaries and stats for midasi keys starting with PREFIX.
 Prioritize personal stats, then system dictionaries."
   (let ((seen (make-hash-table :test 'equal))
-        (stats-results '())
-        (system-results '()))
+        stats-results
+        system-results)
     
     ;; 1. 個人統計データからの前方一致検索（優先）
     (maphash (lambda (midasi _)
@@ -833,8 +833,8 @@ Prioritize personal stats, then system dictionaries."
              (current-page (/ current-idx page-size))
              (start (* current-page page-size))
              (end (min total (+ start page-size)))
-             (formatted-cands '())
-             (i start))
+             (i start)
+             formatted-cands)
 
         ;; 現在のページの7件分のみを生成
         (while (< i end)
