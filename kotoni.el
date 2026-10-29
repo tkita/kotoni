@@ -51,6 +51,9 @@
 
 (defvar-local ktn-henkan-count 0)
 
+(defvar-local ktn--last-was-upper nil
+  "Non-nil if the previous character entered was an uppercase letter.")
+
 ;;; 個人辞書（統計情報）の設定とデータ構造
 (defvar ktn--stats-loaded-p nil
   "Non-nil when personal statistics have been loaded into memory.")
@@ -516,7 +519,8 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
         ktn-okuri-roma-buffer ""
         ktn-okuri-roma-first ""
         ktn-candidates nil
-        ktn-candidate-index 0))
+        ktn-candidate-index 0
+        ktn--last-was-upper))
 
 (defface ktn-completion-preview-face
   '((t (:foreground "#777777")))
@@ -1105,9 +1109,25 @@ When candidates run out, transition to dictionary registration mode."
   (interactive)
   (barf-if-buffer-read-only)
   (let* ((ch last-command-event)
-         (is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
-         (lower-ch (if is-upper (+ ch 32) ch))
-         (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z))))
+         (raw-is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
+         (is-alpha-char (and (characterp ch)
+                             (or (and (<= ?A ch) (<= ch ?Z))
+                                 (and (<= ?a ch) (<= ch ?z)))))
+         ;; 直前が大文字で、かつ今回の文字がアルファベットなら、強制的に小文字扱いにする
+         (forced-lower (and ktn--last-was-upper is-alpha-char))
+         (treat-as-upper (and raw-is-upper (not forced-lower)))
+         (lower-ch (if (or raw-is-upper forced-lower)
+                       (if (and (characterp ch) (<= ?A ch) (<= ch ?Z))
+                           (+ ch 32)
+                         ch)
+                     ch))
+         (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z)))
+         ;; ★ 本物の大文字（強制小文字化されていないもの）を is-upper として定義
+         (is-upper (and raw-is-upper (not forced-lower))))
+
+    ;; 次回のためのフラグ更新
+    (setq ktn--last-was-upper treat-as-upper)
+
     (cond
      ;; ▼ 変換候補選択中に入力が来たら、まず確定させてから次の入力として処理する
      ((eq ktn-state 'converting)
@@ -1151,17 +1171,14 @@ When candidates run out, transition to dictionary registration mode."
       (if is-upper
           ;; ★ここで大文字が来たら「送り仮名」の入力に切り替える
           (progn
-            ;; まず溜まっていたローマ字をかなに変換してヘッドワードへ
             (unless (string-empty-p ktn-roma-buffer)
               (setq ktn-headword-buffer (concat ktn-headword-buffer ktn-roma-buffer)
                     ktn-roma-buffer ""))
-            ;; 送り英文字の記憶 (例: "k")
             (let ((char-str (char-to-string lower-ch)))
               (setq ktn-okuri-roma-first char-str
                     ktn-okuri-roma-buffer char-str
                     ktn-okuri-buffer "")
               (ktn--update-inline-display)
-              ;; 母音大文字 (例: U) のように1文字でかなが完成する場合のみ自動変換
               (let ((res (ktn--process-roma-input char-str)))
                 (unless (string-empty-p (car res))
                   (setq ktn-okuri-buffer (car res)
@@ -1169,17 +1186,14 @@ When candidates run out, transition to dictionary registration mode."
                   (ktn--update-inline-display)
                   (ktn-start-henkan)))))
 
-        ;; 小文字入力
+        ;; 小文字入力（または強制小文字化された入力）
         (if (string-empty-p ktn-okuri-roma-first)
-            ;; まだ送り仮名に入っていなければヘッドワード側
             (let* ((char-str (if is-alpha (char-to-string lower-ch) (char-to-string ch)))
                    (res (ktn--process-roma-input char-str)))
               (setq ktn-headword-buffer (concat ktn-headword-buffer (car res))
                     ktn-roma-buffer (cdr res))
               (ktn--update-inline-display))
-          ;; 既に送り仮名に入っていれば送り仮名側
           (let* ((char-str (if is-alpha (char-to-string lower-ch) (char-to-string ch)))
-                 ;; 溜まっている送りローマ字と結合して変換を処理
                  (saved-roma ktn-roma-buffer))
             (setq ktn-roma-buffer ktn-okuri-roma-buffer)
             (let ((res (ktn--process-roma-input char-str)))
@@ -1187,7 +1201,6 @@ When candidates run out, transition to dictionary registration mode."
                     ktn-okuri-roma-buffer (cdr res)
                     ktn-roma-buffer saved-roma)
               (ktn--update-inline-display)
-              ;; 送り仮名がかな (例: "く") に確定した瞬間に自動変換発火
               (unless (string-empty-p ktn-okuri-buffer)
                 (ktn-start-henkan)))))))
 
