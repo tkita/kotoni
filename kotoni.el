@@ -520,7 +520,7 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
         ktn-okuri-roma-first ""
         ktn-candidates nil
         ktn-candidate-index 0
-        ktn--last-was-upper))
+        ktn--last-was-upper nil))
 
 (defface ktn-completion-preview-face
   '((t (:foreground "#777777")))
