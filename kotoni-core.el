@@ -21,12 +21,6 @@
 (require 'cl-lib)
 (require 'json)
 
-
-
-
-
-
-
 (defun ktn--hiragana-to-katakana (str)
   "Convert Hiragana string STR to Katakana."
   (let ((rules '(("う゛" . "ヴ")
@@ -75,24 +69,29 @@
     (nreverse result)))
 
 (defun ktn-dictionary-search (dict midasi &optional is-okuri)
-  "Search MIDASI in dictionary instance DICT supporting both JSON and Text formats."
+  "Search MIDASI in dictionary instance DICT using pure Hash-table lookup."
   (let ((file (ktn-dictionary-path dict)))
     (when (and file (file-exists-p file))
       (if (string-suffix-p ".json" file t)
-          ;; --- JSON 辞書の検索処理 ---
+          ;; --- JSON 辞書の検索処理（ハッシュ形式に統一） ---
           (let ((data (ktn-dictionary-data dict)))
             (unless data
               (with-temp-buffer
                 (insert-file-contents file)
+                ;; :object-type 'hash-table でJSONオブジェクトをすべてEmacs Lispのハッシュとして展開
                 (setq data (json-parse-buffer :object-type 'hash-table))
                 (setf (ktn-dictionary-data dict) data)))
-            (let* ((section (cond
-                             (is-okuri (gethash "okuri_ari" data))
-                             (t (or (gethash "okuri_nasi" data) data))))
-                   (raw-cands (and section (hash-table-p section) (gethash midasi section))))
-              (when raw-cands
-                (ktn--parse-candidate-items raw-cands))))
-        ;; --- 従来のテキスト辞書の検索処理 ---
+            (when (hash-table-p data)
+              (let* ((section-key (if is-okuri "okuri_ari" "okuri_nasi"))
+                     (section (gethash section-key data))
+                     ;; ハッシュテーブルから見出し語を O(1) で直接取得
+                     (raw-cands (cond
+                                 ((hash-table-p section) (gethash midasi section))
+                                 ((hash-table-p data) (gethash midasi data))
+                                 (t nil))))
+                (when raw-cands
+                  (ktn--parse-candidate-items raw-cands)))))
+        ;; --- 従来のテキスト辞書の検索処理（フォールバック） ---
         (let ((buf (ktn-dictionary-buffer dict)))
           (unless (and (bufferp buf) (buffer-live-p buf))
             (setq buf (get-buffer-create (concat " *ktn-" (file-name-nondirectory file) "*")))
