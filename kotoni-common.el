@@ -30,9 +30,6 @@
 
 (defvar-local ktn-henkan-count 0)
 
-(defvar-local ktn--last-was-upper nil
-  "Non-nil if the previous character entered was an uppercase letter.")
-
 ;;; 個人辞書（統計情報）の設定とデータ構造
 (defvar ktn--stats-loaded-p nil
   "Non-nil when personal statistics have been loaded into memory.")

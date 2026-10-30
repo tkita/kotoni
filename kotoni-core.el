@@ -315,8 +315,7 @@
         ktn-okuri-roma-buffer ""
         ktn-okuri-roma-first ""
         ktn-candidates nil
-        ktn-candidate-index 0
-        ktn--last-was-upper nil))
+        ktn-candidate-index 0))
 
 (defun ktn--update-inline-display ()
   "Update the inline overlay to display current input or conversion candidate."
@@ -928,24 +927,9 @@ When candidates run out, transition to dictionary registration mode."
   (barf-if-buffer-read-only)
   (ktn--hassamu-abort)
   (let* ((ch last-command-event)
-         (raw-is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
-         (is-alpha-char (and (characterp ch)
-                             (or (and (<= ?A ch) (<= ch ?Z))
-                                 (and (<= ?a ch) (<= ch ?z)))))
-         ;; 直前が大文字で、かつ今回の文字がアルファベットなら、強制的に小文字扱いにする
-         (forced-lower (and ktn--last-was-upper is-alpha-char))
-         (treat-as-upper (and raw-is-upper (not forced-lower)))
-         (lower-ch (if (or raw-is-upper forced-lower)
-                       (if (and (characterp ch) (<= ?A ch) (<= ch ?Z))
-                           (+ ch 32)
-                         ch)
-                     ch))
-         (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z)))
-         ;; ★ 本物の大文字（強制小文字化されていないもの）を is-upper として定義
-         (is-upper (and raw-is-upper (not forced-lower))))
-
-    ;; 次回のためのフラグ更新
-    (setq ktn--last-was-upper treat-as-upper)
+         (is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
+         (lower-ch (if is-upper (+ ch 32) ch))
+         (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z))))
 
     (cond
      ;; ▼ 変換候補選択中に入力が来たら、まず確定させてから次の入力として処理する
