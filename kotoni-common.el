@@ -1,5 +1,7 @@
 ;;; kotoni-common.el --- Shared definitions for Kotoni -*- lexical-binding: t; coding: utf-8; -*-
 
+(require 'cl-lib)
+
 (defgroup ktn nil
   "Minimal SKK clone focusing on modeline and basic insertion."
   :group 'input-method)
@@ -7,12 +9,12 @@
 (defface ktn-headword-face
   '((t (:inherit underline)))
   "Face for ▽/▼ headword overlay display."
-  :group 'ktn)
+  :group 'kotoni)
 
 (defface ktn-selected-face
   '((t (:inherit highlight)))
   "Face for the currently selected candidate in the echo area list."
-  :group 'ktn)
+  :group 'kotoni)
 
 (defcustom ktn-indicator " [▼]"
   "Modeline indicator when `ktn-mode` is active."
@@ -21,7 +23,7 @@
 (defcustom ktn-jisyo-file (expand-file-name "~/.emacs.d/skk-large-jisyo")
   "Path to SKK Dictionary file (Text or JSON)."
   :type 'file
-  :group 'ktn)
+  :group 'kotoni)
 
 (defcustom ktn-show-candidates-nth-henkan 3
   "何回目のスペース打鍵で候補一覧バッファを表示するか"
@@ -148,15 +150,12 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   :set (lambda (symbol value)
          (set-default symbol value)
          (ktn-setup-roma-table))
-  :group 'ktn)
+  :group 'kotoni)
 
 (defvar-local ktn--saved-cursor-color nil)
 
 (defconst ktn-candidate-buffer-name " *ktn-candidates*" ; 隠しバッファ: バッファ名の先頭にスペース
   "Name of the temporary buffer used for displaying conversion candidates.")
-
-(defvar-local ktn-mode nil
-  "Non-nil if Ktn mode is enabled in the current buffer.")
 
 (defvar-local ktn-state nil
   "Current input state of Ktn. Either nil, 'headword (▽), or 'converting (▼).")
@@ -206,7 +205,8 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defface ktn-completion-preview-face
   '((t (:foreground "#777777")))
   "Face for dynamic completion inline preview (pale/dim color)."
-  :group 'ktn)
+  :group 'kotoni)
+
 (defface ktn-index-face
   '((t (:background "white" :foreground "black" :underline t)))
   "Face for candidate selection index keys."
