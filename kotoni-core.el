@@ -245,22 +245,34 @@
 
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
-  ;; 1. ローマ字テーブルのセットアップ
-  (unless ktn-roma-table
-    (ktn-setup-roma-table))
+  (if (not (ktn--load-stats))
+      ;; 失敗時 (early return / abort)
+      (progn
+        (setq ktn-mode nil)
+        (message "ktn-mode activation aborted due to dictionary load/parse error.")
+        nil)
 
-  ;; 2. システム辞書インスタンスの設定
-  (setf (ktn-dictionary-path ktn--system-jisyo-instance) ktn-jisyo-file
-        (ktn-dictionary-data ktn--system-jisyo-instance) nil)
-  (setq ktn-dictionaries (list ktn--system-jisyo-instance))
+    ;; 成功時の処理
+    ;; 1. ローマ字テーブルのセットアップ
+    (unless ktn-roma-table
+      (ktn-setup-roma-table))
 
-  ;; 3. 統計情報のロード（失敗時は ktn-mode の有効化を中止）
-  (if (ktn--load-stats)
-      (unless (memq #'ktn-save-stats kill-emacs-hook)
-        (add-hook 'kill-emacs-hook #'ktn-save-stats))
-    (setq ktn-mode nil)
-    (message "ktn-mode activation aborted due to dictionary load/parse error.")
-    nil))
+    ;; 2. システム辞書インスタンスの設定
+    (setf (ktn-dictionary-path ktn--system-jisyo-instance) ktn-jisyo-file)
+    (setq ktn-dictionaries (list ktn--system-jisyo-instance))
+
+    (let ((file (ktn-dictionary-path ktn--system-jisyo-instance)))
+      (when (and file (file-exists-p file) (string-suffix-p ".json" file t))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (setf (ktn-dictionary-data ktn--system-jisyo-instance)
+                (json-parse-buffer :object-type 'hash-table)))))
+
+    ;; 3. 終了フックの登録
+    (unless (memq #'ktn-save-stats kill-emacs-hook)
+      (add-hook 'kill-emacs-hook #'ktn-save-stats))
+
+    t))
 
 
 (defvar ktn-mode-map
@@ -500,24 +512,17 @@ Prioritize personal stats, then system dictionaries."
     
     ;; 2. JSON システム辞書からの前方一致検索
     (dolist (dict ktn-dictionaries)
-      (let ((file (ktn-dictionary-path dict)))
-        (when (and file (file-exists-p file) (string-suffix-p ".json" file t))
-          (unless (ktn-dictionary-data dict)
-            (with-temp-buffer
-              (insert-file-contents file)
-              (setf (ktn-dictionary-data dict) (json-parse-buffer :object-type 'hash-table))))
-          
-          (let ((data (ktn-dictionary-data dict)))
-            (when data
-              (dolist (section-key '("okuri_nasi" "okuri_ari"))
-                (let ((section (gethash section-key data)))
-                  (when (hash-table-p section)
-                    (maphash (lambda (midasi _)
-                               (when (and (string-prefix-p prefix midasi)
-                                          (not (gethash midasi seen)))
-                                 (puthash midasi t seen)
-                                 (push midasi system-results)))
-                             section)))))))))
+      (let ((data (ktn-dictionary-data dict)))
+        (when (hash-table-p data)
+          (dolist (section-key '("okuri_nasi" "okuri_ari"))
+            (let ((section (gethash section-key data)))
+              (when (hash-table-p section)
+                (maphash (lambda (midasi _)
+                           (when (and (string-prefix-p prefix midasi)
+                                      (not (gethash midasi seen)))
+                             (puthash midasi t seen)
+                             (push midasi system-results)))
+                         section)))))))
     
     (setq system-results (sort system-results #'string<))
     
