@@ -1,5 +1,15 @@
 ;;; kotoni-common.el --- Shared definitions for Kotoni -*- lexical-binding: t; coding: utf-8; -*-
 
+;; Copyright (C) 2026
+;; Version: 0.1
+;; Author: Tsuyoshi Kitamoto <tsuyohi.kitamoto@gmail.com>
+;; License: GPL-3.0-or-later
+;; Package-Requires: ((emacs "30.1") (cl-lib "0.5") (json))
+
+;;; Commentary:
+
+;;; Code:
+
 (require 'cl-lib)
 
 (defgroup ktn nil
@@ -18,7 +28,8 @@
 
 (defcustom ktn-indicator " [▼]"
   "Modeline indicator when `ktn-mode` is active."
-  :type 'string)
+  :type 'string
+  :group 'kotoni)
 
 (defcustom ktn-jisyo-file (expand-file-name "~/.emacs.d/skk-large-jisyo")
   "Path to SKK Dictionary file (Text or JSON)."
