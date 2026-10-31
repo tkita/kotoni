@@ -7,17 +7,9 @@
 ;; Package-Requires: ((emacs "30.1") (cl-lib "0.5") (json))
 
 ;;; Commentary:
-;; Minimalist SKK clone leveraging lexical binding and cl-lib.
-;; Named Kotoni (琴似), Sapporo City, Japan.
-;;
-;; Example configuration:
-;;   (add-to-list 'load-path "/path/to/kotoni")
-;;   (setq ktn-user-roma-table '(("z," . "‥") ("z." . "…")))
-;;   (setq ktn-jisyo-file "/usr/share/skk/SKK-JISYO.L.json")
-;;   (require 'kotoni)
-;;   (global-set-key (kbd "C-x C-j") #'ktn-mode)
 
 ;;; Code:
+
 (require 'cl-lib)
 (require 'json)
 
