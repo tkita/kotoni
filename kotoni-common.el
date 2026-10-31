@@ -218,6 +218,14 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   "Face for dynamic completion inline preview (pale/dim color)."
   :group 'kotoni)
 
+(defface ktn-completion-base-face
+  '((t (:inherit default)))
+  "Face for the typed prefix part in candidate lists.")
+
+(defface ktn-completion-rest-face
+  '((t (:inherit font-lock-keyword-face :weight bold)))
+  "Face for the uncompleted/remaining part in candidate lists.")
+
 (defface ktn-index-face
   '((t (:background "white" :foreground "black" :underline t)))
   "Face for candidate selection index keys."

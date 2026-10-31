@@ -644,34 +644,52 @@ Prioritize personal stats, then system dictionaries."
 (defun ktn--show-completions-window ()
   "Display completion candidates in the candidate buffer/window (max 7 items per page)."
   (if ktn--completion-cands
-      (let* ((total (length ktn--completion-cands))
-             (page-size 7)
-             (current-idx (mod (1- ktn--completion-index) total))
+      (let* ((total        (length ktn--completion-cands))
+             (page-size    7)
+             (current-idx  (mod (1- ktn--completion-index) total))
              (current-page (/ current-idx page-size))
-             (start (* current-page page-size))
-             (end (min total (+ start page-size)))
-             (i start)
+             (start        (* current-page page-size))
+             (i            start)
+             (end          (min total (+ start page-size)))
+             (prefix       (or ktn--completion-base ""))
              formatted-cands)
 
         ;; 現在のページの7件分のみを生成
         (while (< i end)
           (let* ((cand (nth i ktn--completion-cands))
+                 ;; ベース部分と補完部分に分割してそれぞれ face を適用
+                 (base-part (if (string-prefix-p prefix cand) prefix ""))
+                 (rest-part (if (string-prefix-p prefix cand)
+                                (substring cand (length prefix))
+                              cand))
+                 (formatted-base (propertize base-part 'face 'ktn-completion-base-face))
+                 (formatted-rest (propertize rest-part 'face 'ktn-completion-rest-face))
+                 (cand-display (concat formatted-base formatted-rest))
+
+                 ;; 選択状態に応じた装飾（記号とインデント）を付与
                  (item (if (= i current-idx)
-                           (propertize (format " > %s" cand) 'face 'ktn-selected-face)
-                         (format "   %s" cand))))
-            (push item formatted-cands)
+                           (concat (propertize " > " 'face 'ktn-selected-face) cand-display)
+                         (concat "    " cand-display))))
+            (push (if (= i current-idx)
+                      (propertize item 'face 'ktn-selected-face)
+                    item)
+                  formatted-cands)
             (setq i (1+ i))))
 
         (let* ((buf (ktn--get-or-create-candidate-buffer))
                (win (display-buffer buf)))
-          ;; 右寄せページ表示の計算
-          (let* ((win-width (if (window-live-p win) (window-width win) (frame-width)))
-                 (page-str (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
-                 (padding (max 0 (- win-width (string-width page-str) 2)))
+          ;; ページ表示は右寄せ
+          (let* ((win-width         (if (window-live-p win)
+                                       (window-width win)
+                                     (frame-width)))
+                 (page-str          (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
+                 (padding           (max 0 (- win-width (string-width page-str) 2)))
                  (right-aligned-page (concat (make-string padding ?\s) page-str))
-                 (content (concat "【TAB補完候補】\n"
-                                  (mapconcat #'identity (nreverse formatted-cands) "\n")
-                                  (if (> total page-size) (concat "\n" right-aligned-page) ""))))
+                 (content           (concat "【TAB補完候補】\n"
+                                            (mapconcat #'identity (nreverse formatted-cands) "\n")
+                                            (if (> total page-size)
+                                                (concat "\n" right-aligned-page)
+                                              ""))))
 
             (with-current-buffer buf
               (let ((inhibit-read-only t))
