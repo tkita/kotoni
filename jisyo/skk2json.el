@@ -66,13 +66,14 @@
                      (items (split-string clean-body "/" t))
                      cands)
 
-                (dolist (item items)
-                  (let ((cand-obj
-                         (if (string-match "^\\([^;]+\\);\\(.*\\)$" item)
-                             `(("word" . ,(match-string 1 item))
-                               ("annotation" . ,(match-string 2 item)))
-                           `(("word" . ,item)))))
-                    (push cand-obj cands)))
+                (unless (string-match-p ">" midasi)
+                  (dolist (item items)
+                    (let ((cand-obj
+                           (if (string-match "^\\([^;]+\\);\\(.*\\)$" item)
+                               `(("word" . ,(match-string 1 item))
+                                 ("annotation" . ,(match-string 2 item)))
+                             `(("word" . ,item)))))
+                      (push cand-obj cands))))
 
                 (when cands
                   (let ((target-hash (if (eq current-section 'okuri-ari)
