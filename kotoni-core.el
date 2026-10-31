@@ -751,23 +751,17 @@ supporting recursive minibuffer input and sub-registrations."
           ktn-candidates nil
           ktn-candidate-index 0)
     (message "")
-    (ktn--update-inline-display)
-    ;; (message "Quit conversion, back to ▽ mode")
-    )
+    (ktn--update-inline-display))
 
    ;; 2. ▽ 見出し語入力中ならキャンセル
    ((eq ktn-state 'headword)
-    (ktn--cleanup-headword)
-    ;; (message "Quit ▽ mode")
-    )
+    (ktn--cleanup-headword))
 
-   ;; 3. 通常モードならバッファのローマ字バッファをクリア、なければC-gをパス
+   ;; 3. 通常モードならバッファのローマ字バッファをクリア
    (t
-    (if (not (string-empty-p ktn-roma-buffer))
-        (progn (setq ktn-roma-buffer "")
-               ;; (message "Quit ktn input")
-               )
-      (keyboard-quit)))))
+    (if (string-empty-p ktn-roma-buffer)
+        (keyboard-quit)
+      (setq ktn-roma-buffer "")))))
 
 ;;;###autoload
 (defun ktn-backspace ()
@@ -807,10 +801,7 @@ supporting recursive minibuffer input and sub-registrations."
      ((not (string-empty-p ktn-headword-buffer))
       (setq ktn-headword-buffer (substring ktn-headword-buffer 0 -1))
       (if (string-empty-p ktn-headword-buffer)
-          (progn
-            (ktn--cleanup-headword)
-            ;; (message "Quit ▽ mode")
-            )
+          (ktn--cleanup-headword)
         (ktn--update-inline-display)))
 
      ;; 3. どちらも空ならモードをクリーンアップ
@@ -844,32 +835,29 @@ When candidates run out, transition to dictionary registration mode."
     (let ((cands (if (not (string-empty-p ktn-okuri-roma-first))
                      (ktn-search-jisyo-with-okuri-combined ktn-headword-buffer ktn-okuri-roma-first ktn-okuri-buffer)
                    (ktn-search-jisyo-combined ktn-headword-buffer))))
-      (if cands
-          ;; 候補が見つかった場合
-          (progn
-            (setq ktn-state 'converting
-                  ktn-candidates cands
-                  ktn-candidate-index 0
-                  ktn-henkan-count 0)
+      (if (not cands)
+          ;; 辞書に最初からヒットしない場合 -> 辞書登録モードへ
+          (ktn--prompt-dict-registration)
+        ;; 候補が見つかった場合
+        (setq ktn-state 'converting
+              ktn-candidates cands
+              ktn-candidate-index 0
+              ktn-henkan-count 0)
             (ktn--update-inline-display)
             ;; (ktn--show-candidates-window) ; 1発目で開くとウザい
-            )
-        ;; 辞書に最初からヒットしない場合 -> 辞書登録モードへ
-        (ktn--prompt-dict-registration))))
+            )))
 
    ;; 2. ▼ 変換候補選択中（SPCで次候補へ進む）
    ((eq ktn-state 'converting)
     (setq ktn-henkan-count (1+ ktn-henkan-count))
-    (let ((total (length ktn-candidates)))
-      (if (< (1+ ktn-candidate-index) total)
-          (progn
-            (setq ktn-candidate-index (1+ ktn-candidate-index))
-            (ktn--update-inline-display)
-            (when (>= ktn-henkan-count 2)
-              (ktn--show-candidates-window)))
+    (if (>= (1+ ktn-candidate-index) (length ktn-candidates))
         ;; 候補を全て出し切った状態でさらに SPC を押した場合 -> 辞書登録モードへ
-        (ktn--prompt-dict-registration))))
+        (ktn--prompt-dict-registration)
 
+      (setq ktn-candidate-index (1+ ktn-candidate-index))
+      (ktn--update-inline-display)
+      (when (>= ktn-henkan-count 2)
+        (ktn--show-candidates-window))))
    (t
     (insert " "))))
 
@@ -877,29 +865,29 @@ When candidates run out, transition to dictionary registration mode."
   "Register a new WORD (with optional ANNOTATION) for MIDASI into `ktn--stats-data` and save."
   (let* ((clean-word (if annotation (concat word ";" annotation) word))
          (cands-hash (gethash midasi ktn--stats-data)))
-    ;; 1. メモリ上のハッシュに初期カウント1（または既存＋1）で追加・更新
+    ;; メモリ上のハッシュに初期カウント1（または既存＋1）で追加・更新
     (unless cands-hash
       (setq cands-hash (make-hash-table :test 'equal))
       (puthash midasi cands-hash ktn--stats-data))
-    (let ((current-count (gethash clean-word cands-hash 0)))
-      (puthash clean-word (1+ current-count) cands-hash))
-    
-    ;; 2. 即座に JSON ファイル（~/.jisyo.json）へ永続化
-    (ktn-save-stats)
-    
+    (puthash clean-word
+             (1+ (gethash clean-word cands-hash 0)) ; current-count
+             cands-hash)
+
+    (ktn-save-stats)          ; JSON ファイル（~/.jisyo.json）へ永続化
     (message "辞書に登録しました: [%s] -> %s" midasi clean-word)))
 
 (defun ktn-prev-candidate ()
   "Select previous candidate in converting (▼) mode."
   (interactive)
   (ktn--hassamu-abort)
-  (if (eq ktn-state 'converting)
-      (let ((total (length ktn-candidates)))
-        ;; 先頭なら末尾へループさせる場合
-        (setq ktn-candidate-index (mod (1- ktn-candidate-index) total))
-        (ktn--update-inline-display)
-        (ktn--show-candidates-window))
-    (ktn-insert)))
+  (if (not (eq ktn-state 'converting))
+      (ktn-insert)
+
+    ;; 先頭なら末尾へループさせる場合
+    (setq ktn-candidate-index (mod (1- ktn-candidate-index)
+                                   (length ktn-candidates)))
+    (ktn--update-inline-display)
+    (ktn--show-candidates-window)))
 
 ;;;###autoload
 (defun ktn-kakutei ()
@@ -955,7 +943,7 @@ When candidates run out, transition to dictionary registration mode."
   (interactive)
   (barf-if-buffer-read-only)
   (ktn--hassamu-abort)
-  (let* ((ch last-command-event)
+  (let* ((ch       last-command-event)
          (is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
          (lower-ch (if is-upper (+ ch 32) ch))
          (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z))))
@@ -963,10 +951,10 @@ When candidates run out, transition to dictionary registration mode."
     (cond
      ;; ▼ 変換候補選択中に入力が来たら、まず確定させてから次の入力として処理する
      ((eq ktn-state 'converting)
-      (let* ((page-size (length ktn-select-keys))
+      (let* ((page-size    (length ktn-select-keys))
              (current-page (/ ktn-candidate-index page-size))
-             (page-start (* current-page page-size))
-             (key-idx (cl-position ch ktn-select-keys)))
+             (page-start   (* current-page page-size))
+             (key-idx      (cl-position ch ktn-select-keys)))
         (cond
          (key-idx
           (let ((target-idx (+ page-start key-idx)))
