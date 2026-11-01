@@ -229,6 +229,10 @@ If the value is nil, return DEFAULT, or for string-like keys, return \"\" automa
   (setq ktn--state (plist-put ktn--state key value))
   value)
 
+(defun ktn--mode-p (mode)
+  "Return non-nil if current IME mode matches MODE."
+  (eq (ktn--state-get :mode) mode))
+
 (defun ktn--state-reset ()
   "Reset `ktn--state` plist in the current buffer to its initial empty state."
   (setq ktn--state

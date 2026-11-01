@@ -333,7 +333,7 @@
 
     (cond
      ;; --- 1. ▽ 見出し語入力中モード ---
-     ((eq (ktn--state-get :mode) 'headword)
+     ((ktn--mode-p 'headword)
       (let* ((input-str (concat (ktn--state-get :headword-buffer)
                                 (ktn--state-get :roma-buffer)
                                 (unless (string-empty-p (ktn--state-get :okuri-roma-first))
@@ -359,7 +359,7 @@
           (overlay-put (ktn--state-get :headword-overlay) 'after-string nil))))
 
      ;; --- 2. ▼ 漢字変換中・候補選択モード ---
-     ((eq (ktn--state-get :mode) 'converting)
+     ((ktn--mode-p 'converting)
       (let* ((cand (nth (ktn--state-get :candidate-index) (ktn--state-get :candidates) ))
              ;; どんなデータ構造（文字列、コンスセル、入れ子リスト）であっても漢字文字列を安全に取り出す
              (cand-str (cond
@@ -376,7 +376,7 @@
 
 (defun ktn--show-candidates-window ()
   "Display candidate items in a dedicated popup window at the bottom of the frame."
-  (if (not (eq (ktn--state-get :mode) 'converting))
+  (if (not (ktn--mode-p 'converting))
       (ktn--close-candidate-window)
     (let* ((total        (length (ktn--state-get :candidates) ))
            (page-size    (length ktn-select-keys))
@@ -430,7 +430,7 @@
   "Jump to the next page of candidates in converting mode."
   (interactive)
   (ktn--hassamu-abort)
-  (if (not (eq (ktn--state-get :mode) 'converting))
+  (if (not (ktn--mode-p 'converting))
       (call-interactively #'self-insert-command)
     (let* ((total        (length (ktn--state-get :candidates) ))
            (page-size    (length ktn-select-keys))
@@ -447,7 +447,7 @@
   "Jump to the previous page of candidates in converting mode."
   (interactive)
   (ktn--hassamu-abort)
-  (if (not (eq (ktn--state-get :mode) 'converting))
+  (if (not (ktn--mode-p 'converting))
       (call-interactively #'self-insert-command)
     (let* ((total        (length (ktn--state-get :candidates)))
            (page-size    (length ktn-select-keys))
@@ -529,7 +529,7 @@ Prioritize personal stats, then system dictionaries."
   "Cycle through headword completion candidates in reverse order using Shift-TAB."
   (interactive)
   (ktn--hassamu-abort)
-  (if (not (eq (ktn--state-get :mode) 'headword))
+  (if (not (ktn--mode-p 'headword))
       (call-interactively #'indent-for-tab-command)
 
     (unless (string-empty-p (ktn--state-get :roma-buffer))
@@ -566,7 +566,7 @@ Prioritize personal stats, then system dictionaries."
                                  "*")
                                (ktn--state-get :okuri-buffer)
                                (ktn--state-get :okuri-roma-buffer))))
-    (when (and (eq (ktn--state-get :mode) 'headword)
+    (when (and (ktn--mode-p 'headword)
                (string-empty-p (ktn--state-get :okuri-roma-first))
                (not (string-empty-p current-input)))
       (when (or (null (ktn--state-get :completion-cands))
@@ -602,7 +602,7 @@ Prioritize personal stats, then system dictionaries."
           (message "ktn-hassamu: '%s' を挿入しました。" target)))
 
     ;; 従来の ▽ モード用 TAB 補完
-    (if (eq (ktn--state-get :mode) 'headword)
+    (if (ktn--mode-p 'headword)
         (progn
           ;; 未確定のローマ字があればヘッドワードバッファに結合
           (unless (string-empty-p (ktn--state-get :roma-buffer))
@@ -750,7 +750,7 @@ supporting recursive minibuffer input and sub-registrations."
   (ktn--hassamu-abort)
   (cond
    ;; 1. ▼ 変換候補選択中なら ▽ 見出し語入力状態に戻る
-   ((eq (ktn--state-get :mode) 'converting)
+   ((ktn--mode-p 'converting)
     (ktn--state-set :mode'headword)
     (ktn--state-set :candidates nil)
     (ktn--state-set :candidate-index 0)
@@ -758,7 +758,7 @@ supporting recursive minibuffer input and sub-registrations."
     (ktn--update-inline-display))
 
    ;; 2. ▽ 見出し語入力中ならキャンセル
-   ((eq (ktn--state-get :mode) 'headword)
+   ((ktn--mode-p 'headword)
     (ktn--cleanup-headword))
 
    ;; 3. 通常モードならバッファのローマ字バッファをクリア
@@ -776,7 +776,7 @@ supporting recursive minibuffer input and sub-registrations."
   (ktn--reset-completion)
   (cond
    ;; ▼ 変換候補選択中なら C-g と同様に ▽ モードに戻す
-   ((eq (ktn--state-get :mode) 'converting)
+   ((ktn--mode-p 'converting)
     (ktn--state-set :mode 'headword)
     (ktn--state-set :candidates nil)
     (ktn--state-set :candidate-index 0)
@@ -784,7 +784,7 @@ supporting recursive minibuffer input and sub-registrations."
     (ktn--update-inline-display))
 
    ;; ▽ 見出し語入力中
-   ((eq (ktn--state-get :mode) 'headword)
+   ((ktn--mode-p 'headword)
     (ktn--reset-completion)
     (cond
      ;; 1. 未確定ローマ字バッファに文字があればそこから1文字削る
@@ -825,7 +825,7 @@ When candidates run out, transition to dictionary registration mode."
   (ktn--hassamu-abort)
   (cond
    ;; 1. ▽ モードでの変換開始
-   ((eq (ktn--state-get :mode) 'headword)
+   ((ktn--mode-p 'headword)
     (unless (string-empty-p (ktn--state-get :roma-buffer))
       (ktn--state-set :headword-buffer (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
       (ktn--state-set :roma-buffer ""))
@@ -856,7 +856,7 @@ When candidates run out, transition to dictionary registration mode."
         )))
 
    ;; 2. ▼ 変換候補選択中（SPCで次候補へ進む）
-   ((eq (ktn--state-get :mode) 'converting)
+   ((ktn--mode-p 'converting)
     (ktn--state-set :henkan-count (1+ (ktn--state-get :henkan-count)))
     (if (>= (1+     (ktn--state-get :candidate-index))
             (length (ktn--state-get :candidates)))
@@ -889,7 +889,7 @@ When candidates run out, transition to dictionary registration mode."
   "Select previous candidate in converting (▼) mode."
   (interactive)
   (ktn--hassamu-abort)
-  (if (not (eq (ktn--state-get :mode) 'converting))
+  (if (not (ktn--mode-p 'converting))
       (ktn-insert)
 
     ;; 先頭なら末尾へループさせる場合
@@ -912,7 +912,7 @@ When candidates run out, transition to dictionary registration mode."
                        (concat (ktn--state-get :headword-buffer) (ktn--state-get :okuri-roma-first))
                      (ktn--state-get :headword-buffer)))
            (text (cond
-                  ((eq (ktn--state-get :mode) 'converting)
+                  ((ktn--mode-p 'converting)
                    (car (nth (ktn--state-get :candidate-index) (ktn--state-get :candidates))))
                   (t
                    (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)
@@ -922,7 +922,7 @@ When candidates run out, transition to dictionary registration mode."
                      (marker-position (ktn--state-get :headword-start-marker)))))
       
       ;; ▼ 変換候補から確定された場合に統計情報を記録し、即座にファイル保存する
-      (when (eq (ktn--state-get :mode) 'converting)
+      (when (ktn--mode-p 'converting)
         (let* ((cands-hash (gethash midasi ktn--stats-data)))
           (unless cands-hash
             (setq cands-hash (make-hash-table :test 'equal))
@@ -966,7 +966,7 @@ When candidates run out, transition to dictionary registration mode."
      ;; (3). その他のキーが押された場合: 現在の変換を一度確定（ktn-kakutei）させた後、
      ;;    入力されたキー（ch）をイベントキュー（unread-command-events）に戻し、
      ;;    次の入力として自然に再処理させる
-     ((eq (ktn--state-get :mode) 'converting)
+     ((ktn--mode-p 'converting)
       (let* ((page-size    (length ktn-select-keys))
              (current-page (/ (ktn--state-get :candidate-index) page-size))
              (page-start   (* current-page page-size))
@@ -1003,7 +1003,7 @@ When candidates run out, transition to dictionary registration mode."
         (ktn--update-inline-display)))
 
      ;; 2. ▽モード時の入力
-     ((eq (ktn--state-get :mode) 'headword)
+     ((ktn--mode-p 'headword)
       (ktn--reset-completion)
       (if is-upper
           ;; ★ここで大文字が来たら「送り仮名」の入力に切り替える
@@ -1054,7 +1054,7 @@ When candidates run out, transition to dictionary registration mode."
   "Convert current headword in ▽ mode to Katakana and commit."
   (interactive)
   (ktn--hassamu-abort)
-  (if (eq (ktn--state-get :mode) 'headword)
+  (if (ktn--mode-p 'headword)
       (let ((kata-text (ktn--hiragana-to-katakana
                         (concat (ktn--state-get :headword-buffer)
                                 (ktn--state-get :roma-buffer)
