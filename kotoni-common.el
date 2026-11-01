@@ -231,26 +231,22 @@ If the value is nil, return DEFAULT, or for string-like keys, return \"\" automa
 
 (defun ktn--state-reset ()
   "Reset `ktn--state` plist in the current buffer to its initial empty state."
-  ;; `plist-put` などの破壊的更新関数でクォートされた定数構造（クォートリテラル）を直接変更すると
-  ;; プログラム全体や他バッファの初期値まで汚染されるリスクがあるため、
-  ;; 毎回 `copy-sequence` でフレッシュな新オブジェクトを生成して独立させる。
   (setq ktn--state
-        (copy-sequence
-         '(:mode nil
-           :headword-buffer ""
-           :roma-buffer ""
-           :okuri-buffer ""
-           :okuri-roma-buffer ""
-           :okuri-roma-first ""
-           :headword-start-marker nil
-           :candidates nil
-           :candidate-index 0
-           :henkan-count 0
-           :completion-cands nil
-           :completion-index 0
-           :completion-base nil
-           :completion-tab-count 0
-           :headword-overlay nil))))
+        (list :mode nil
+              :headword-buffer ""
+              :roma-buffer ""
+              :okuri-buffer ""
+              :okuri-roma-buffer ""
+              :okuri-roma-first ""
+              :headword-start-marker nil
+              :candidates nil
+              :candidate-index 0
+              :henkan-count 0
+              :completion-cands nil
+              :completion-index 0
+              :completion-base nil
+              :completion-tab-count 0
+              :headword-overlay nil)))
 
 (provide 'kotoni-common)
 ;;; kotoni-common.el ends here
