@@ -68,15 +68,63 @@
 ;;; Test Cases (JSON Dictionary Format)
 ;;;
 
+(ktn-define-e2e-test ktn-quit/test1
+  "C-g による入力キャンセルと状態リセットのテスト。"
+  (actions #'ktn-mode
+           "K a n j i C-g"
+           "s a")
+  (expected-buffer-string "さ"))
+
+(ktn-define-e2e-test ktn-katakana-convert/test1
+  "見出し語入力中に q を押すとカタカナに変換される。"
+  (actions #'ktn-mode
+           "K a n j i q")
+  (expected-buffer-string "カンジ"))
+
 (ktn-define-e2e-test basic-henkan/test1
-  "送り有りと送り無しでJSON辞書から変換できる。"
+  "送り有りと送り無しで変換できる。"
   (actions #'ktn-mode
            "K a n J i C-j"
            "K a n j i SPC C-j")
   (expected-buffer-string "感じ漢字"))
 
+(ktn-define-e2e-test ktn-complete/test1
+  "TAB キーによる見出し語のインライン補完テスト。"
+  (actions #'ktn-mode
+           ;; 「か」と途中まで入力して TAB を押し、補完候補を確定・挿入する
+           "K a TAB C-j")
+  (expected-buffer-string "かんじ"))
+
+(ktn-define-e2e-test ktn-select-key/test1
+  "変換中に数字キー（1）を押して直接候補を選択・確定できる。"
+  (actions #'ktn-mode
+           ;; 変換開始（SPC）のあと、1番目の候補を数字キー '1' で直接選択・確定する
+           "K a n j i SPC 1")
+  (expected-buffer-string "漢字"))
+
+(ktn-define-e2e-test ktn-backspace/test1
+  "見出し語入力中のバックスペース（C-h）による文字削除テスト。"
+  (actions #'ktn-mode
+           ;; 「かき」と入力したあと、バックスペースで「か」の状態に戻し、「かんじ」にする
+           "K a k i C-h n j i SPC C-j")
+  (expected-buffer-string "漢字"))
+
+(ktn-define-e2e-test ktn-kakutei-newline/test1
+  "RET による確定と改行の同時実行テスト。"
+  (actions #'ktn-mode
+           "K a n j i SPC RET"
+           "s a")
+  (expected-buffer-string "漢字\nさ"))
+
+(ktn-define-e2e-test ktn-page-navigation/test1
+  "候補一覧表示中の PageDown (<next>) / PageUp (<prior>) によるページ切り替えテスト。"
+  (actions #'ktn-mode
+           ;; 変換開始して候補ウィンドウを開き、ページ送りキーをテストする
+           "K a n j i SPC SPC <next> <prior> C-j")
+  (expected-buffer-string "漢字"))
+
 (ktn-define-e2e-test ktn-previous-candidate/test1
-  "JSON辞書を用いたxでの前候補への戻りテスト。"
+  "'x' で前候補へ戻る。"
   (actions #'ktn-mode
            "K a n j i SPC x C-j")
   (expected-buffer-string "幹事"))
@@ -102,6 +150,17 @@
            ;; 5. 最終的な確定操作
            "C-j C-c C-c")
   (expected-buffer-string "再帰的"))
+
+(ktn-define-e2e-test ktn-hassamu/test1
+  "ktn-hassamu を用いた文脈補完のテスト。"
+  (actions #'ktn-mode
+           ;; バッファに「情報処理技術者」等の文字列がある前提でテスト
+           (lambda () (insert "情報処理技術者が"))
+           #'ktn-hassamu
+           (lambda () (erase-buffer))
+           #'ktn-mode
+           "J o u h o u SPC C-j TAB w o")
+  (expected-buffer-string "情報処理技術者を"))
 
 (ktn-define-e2e-test ktn-mode-off/test1
   "もう一度呼ぶとKTNモードを切れる。"

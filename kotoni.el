@@ -17,11 +17,39 @@
 ;;   (require 'kotoni)
 ;;   (global-set-key (kbd "C-x C-j") #'ktn-mode)
 
+;; アーキテクチャ概要:
+;;
+;; [ kotoni-data.el ]: 第3階層: データ・辞書ストレージ層
+;;   | - system-jisyo (skk-large-jisyo など) 検索
+;;   | - user-stats (JSON統計データ保存・読み込み)
+;;   | - ローマ字-かな変換テーブル定義
+;; ^
+;; ^ 辞書検索・補完クエリ・統計セーブ
+;; ^
+;; [ kotoni-fsm.el ]: 第2階層: FSM / 状態遷移ロジック層
+;;   | - 状態管理 (normal | headword | converting)
+;;   | - ローマ字テーブル・仮名変換・バッファ演算処理
+;; ^
+;; ^ FSMイベント・状態コマンドをディスパッチ
+;; ^
+;; [ kotoni-ui.el ]: 第1階層: UI & インタフェース層
+;;   | - define-minor-mode / ktn-mode-map
+;;   | - ktn-insert (インプットルーター)
+;;   | - オーバーレイ描画・候補一覧ウィンドウ・メッセージ
+;; ^
+;; ^
+;; ^
+;; [ Keyboard / Emacs Buffer ]
+
 ;;; Code:
 
-(require 'kotoni-common)
-(require 'kotoni-core)
+(require 'kotoni-data)
+(require 'kotoni-fsm)
+(require 'kotoni-ui)
 (require 'kotoni-hassamu)
+
+;;;###autoload
+(defalias 'kotoni-mode 'ktn-mode)
 
 (provide 'kotoni)
 ;;; kotoni.el ends here
