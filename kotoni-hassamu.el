@@ -58,20 +58,20 @@
 
 (defun ktn--hassamu-update-display ()
   "ktn-hassamu のアクティブ時に、最初の候補をインラインプレビューとして表示する。"
-  (when (overlayp ktn-headword-overlay)
-    (delete-overlay ktn-headword-overlay)
-    (setq ktn-headword-overlay nil))
+  (when (overlayp (ktn--state-get :headword-overlay))
+    (delete-overlay (ktn--state-get :headword-overlay))
+    (ktn--state-set :headword-overlay nil))
 
   (when (and ktn--hassamu-active-p ktn--hassamu-current-matches)
     (let ((target (car ktn--hassamu-current-matches))
           (pos (point)))
 
-      (setq ktn-headword-overlay (make-overlay pos pos nil t t))
+      (ktn--state-set :headword-overlay (make-overlay pos pos nil t t))
 
-      (move-overlay ktn-headword-overlay pos pos)
-      (overlay-put  ktn-headword-overlay 'before-string nil)
+      (move-overlay (ktn--state-get :headword-overlay) pos pos)
+      (overlay-put  (ktn--state-get :headword-overlay) 'before-string nil)
 
-      (overlay-put  ktn-headword-overlay 'after-string
+      (overlay-put  (ktn--state-get :headword-overlay) 'after-string
                     (propertize (concat "→ " target)
                                 'face 'ktn-completion-preview-face)))))
 

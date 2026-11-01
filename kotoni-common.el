@@ -12,7 +12,7 @@
 
 (require 'cl-lib)
 
-(defgroup ktn nil
+(defgroup kotoni nil
   "Minimal SKK clone focusing on modeline and basic insertion."
   :group 'input-method)
 
@@ -41,15 +41,14 @@
   :type 'integer
   :group 'kotoni)
 
-(defvar-local ktn-henkan-count 0)
-
 ;;; 個人辞書（統計情報）の設定とデータ構造
 (defvar ktn--stats-loaded-p nil
   "Non-nil when personal statistics have been loaded into memory.")
 
 (defcustom ktn-stats-file (expand-file-name "~/.jisyo.json")
   "Path to JSON file storing user conversion statistics."
-  :type 'file)
+  :type 'file
+  :group 'kotoni)
 
 (defvar ktn--stats-data (make-hash-table :test 'equal)
   "Emacs internal hash table for conversion statistics.
@@ -168,48 +167,6 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
 (defconst ktn-candidate-buffer-name " *ktn-candidates*" ; 隠しバッファ: バッファ名の先頭にスペース
   "Name of the temporary buffer used for displaying conversion candidates.")
 
-(defvar-local ktn-state nil
-  "Current input state of Ktn. Either nil, 'headword (▽), or 'converting (▼).")
-
-(defvar-local ktn-candidates nil
-  "List of (CANDIDATE . ANNOTATION) candidate pairs for current conversion.")
-
-(defvar-local ktn-candidate-index 0
-  "Current index in `ktn-candidates`.")
-
-(defvar-local ktn-roma-buffer ""
-  "Buffer storing unconsumed Romaji sequence.")
-
-(defvar-local ktn-headword-buffer ""
-  "Buffer storing accumulated headword in ▽/▼ mode.")
-
-(defvar-local ktn-headword-start-marker nil
-  "Marker pointing to the start of headword input in the buffer.")
-
-(defvar-local ktn-headword-overlay nil
-  "Overlay used for ▽/▼ headword display.")
-
-(defvar-local ktn-okuri-buffer ""
-  "Buffer storing the okurigana (送り仮名) during okuri-ari conversion.")
-
-(defvar-local ktn-okuri-roma-buffer ""
-  "Buffer storing unconsumed Romaji sequence for okurigana.")
-
-(defvar-local ktn--completion-cands nil
-  "List of headword completion candidates matching current prefix.")
-
-(defvar-local ktn--completion-index 0
-  "Current index in `ktn--completion-cands`.")
-
-(defvar-local ktn--completion-base nil
-  "Base headword string before completion started.")
-
-(defvar-local ktn--completion-tab-count 0
-  "Count of TAB presses in the current completion session for the buffer.")
-
-(defvar-local ktn-okuri-roma-first ""
-  "Buffer storing the first romaji character of okurigana.")
-
 (defvar ktn-lighter ""
   "Dynamic modeline lighter for `ktn-mode`.")
 
@@ -230,6 +187,70 @@ Value: hash-table (Key: candidate (string), Value: count (integer))")
   '((t (:background "white" :foreground "black" :underline t)))
   "Face for candidate selection index keys."
   :group 'kotoni)
+
+(defvar-local ktn--state nil
+  "Internal state plist for Kotoni.
+Keys:
+  :mode                 'headword | 'converting | 'normal
+  :headword-buffer      string
+  :roma-buffer          string
+  :okuri-buffer         string
+  :okuri-roma-buffer    string
+  :okuri-roma-first     string
+  :headword-start       marker
+  :candidates           list
+  :candidate-index      int
+  :henkan-count         int
+  :completion-cands     list
+  :completion-index     int
+  :completion-base      string
+  :completion-tab-count int
+  :headword-overlay     overlay")
+
+(defun ktn--state-get (key &optional default)
+  "Get value for KEY from `ktn--state`.
+If the value is nil, return DEFAULT, or for string-like keys, return \"\" automatically."
+  (let ((val (plist-get ktn--state key)))
+    (cond
+     (val val)
+     (default default)
+     ;; 文字列を期待する内部バッファ系のキーは、nil の代わりに "" を返す
+     ((memq key '(:headword-buffer
+                  :roma-buffer
+                  :okuri-buffer
+                  :okuri-roma-buffer
+                  :okuri-roma-first
+                  :completion-base))
+      "")
+     (t nil))))
+
+(defun ktn--state-set (key value)
+  "Set VALUE for KEY in `ktn--state` plist."
+  (setq ktn--state (plist-put ktn--state key value))
+  value)
+
+(defun ktn--state-reset ()
+  "Reset `ktn--state` plist in the current buffer to its initial empty state."
+  ;; `plist-put` などの破壊的更新関数でクォートされた定数構造（クォートリテラル）を直接変更すると
+  ;; プログラム全体や他バッファの初期値まで汚染されるリスクがあるため、
+  ;; 毎回 `copy-sequence` でフレッシュな新オブジェクトを生成して独立させる。
+  (setq ktn--state
+        (copy-sequence
+         '(:mode nil
+           :headword-buffer ""
+           :roma-buffer ""
+           :okuri-buffer ""
+           :okuri-roma-buffer ""
+           :okuri-roma-first ""
+           :headword-start-marker nil
+           :candidates nil
+           :candidate-index 0
+           :henkan-count 0
+           :completion-cands nil
+           :completion-index 0
+           :completion-base nil
+           :completion-tab-count 0
+           :headword-overlay nil))))
 
 (provide 'kotoni-common)
 ;;; kotoni-common.el ends here
