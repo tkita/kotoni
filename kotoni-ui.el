@@ -29,6 +29,53 @@
 (defconst ktn-candidate-buffer-name " *ktn-candidates*")
 (defvar ktn-lighter "")
 
+;; | 10進 | 16進 | ASCII                           | Emacs Lisp での主な ?\ 表記        |
+;; |------|------|---------------------------------|------------------------------------|
+;; |  0   | 00   | NUL (Null文字)                  |  ?\0 (または ?\C-@)                |
+;; |  1   | 01   | SOH (Start of Heading)          |  ?\C-a                             |
+;; |  2   | 02   | STX (Start of Text)             |  ?\C-b                             |
+;; |  3   | 03   | ETX (End of Text)               |  ?\C-c                             |
+;; |  4   | 04   | EOT (End of Transmission)       |  ?\C-d                             |
+;; |  5   | 05   | ENQ (Enquiry)                   |  ?\C-e                             |
+;; |  6   | 06   | ACK (Acknowledge)               |  ?\C-f                             |
+;; |  7   | 07   | BEL (Alert / Bell)              |  ?\a (または ?\C-g)                |
+;; |  8   | 08   | BS  (Backspace)                 |  ?\b (または ?\C-h)                |
+;; |  9   | 09   | HT  (Tab)                       |  ?\t (または ?\C-i, 'tab, 'TAB)    |
+;; | 10   | 0a   | LF  (Line Feed / Newline)       |  ?\n (または ?\C-j)                |
+;; | 11   | 0b   | VT  (Vertical Tab)              |  ?\v (または ?\C-k)                |
+;; | 12   | 0c   | FF  (Form Feed)                 |  ?\f (または ?\C-l)                |
+;; | 13   | 0d   | CR  (Carriage Return)           |  ?\r (または ?\C-m, 'RET, 'return) |
+;; | 14   | 0e   | SO  (Shift Out)                 |  ?\C-n                             |
+;; | 15   | 0f   | SI  (Shift In)                  |  ?\C-o                             |
+;; | 16   | 10   | DLE (Data Link Escape)          |  ?\C-p                             |
+;; | 17   | 11   | DC1 (Device Control 1 (XON))    |  ?\C-q                             |
+;; | 18   | 12   | DC2 (Device Control 2)          |  ?\C-r                             |
+;; | 19   | 13   | DC3 (Device Control 3 (XOFF))   |  ?\C-s                             |
+;; | 20   | 14   | DC4 (Device Control 4)          |  ?\C-t                             |
+;; | 21   | 15   | NAK (Negative Acknowledge)      |  ?\C-u                             |
+;; | 22   | 16   | SYN (Synchronous Idle)          |  ?\C-v                             |
+;; | 23   | 17   | ETB (End of Transmission Block) |  ?\C-w                             |
+;; | 24   | 18   | CAN (Cancel)                    |  ?\C-x                             |
+;; | 25   | 19   | EM  (End of Medium)             |  ?\C-y                             |
+;; | 26   | 1a   | SUB (Substitute)                |  ?\C-z                             |
+;; | 27   | 1b   | ESC (Escape)                    |  ?\e (または ?\C-[)                |
+;; | 28   | 1c   | FS  (File Separator)            |  ?\C-\                             |
+;; | 29   | 1d   | GS  (Group Separator)           |  ?\C-]                             |
+;; | 30   | 1e   | RS  (Record Separator)          |  ?\C-^                             |
+;; | 31   | 1f   | US  (Unit Separator)            |  ?\C-_                             |
+
+(defconst ktn-dispatch-table
+  '(((C-g  7)                     . ktn-quit)
+    ((C-h  8)                     . ktn-backspace-handler)
+    ((C-j 10)                     . ktn-kakutei)
+    ((C-m 13 RET return [return]) . ktn-return-key-handler)
+    ((SPC 32)                     . ktn-start-henkan)
+    ((?q)                         . ktn-katakana-convert-or-insert)
+    ((TAB tab [tab] ?\t)          . ktn-tab-key-handler)
+    ((<prior> prior)              . ktn-prior-page) ; PgUp
+    ((<next> next)                . ktn-next-page)) ; PgDn
+  "キーイベントディスパッチテーブル。")
+
 ;;; 表示・描画系関数
 (defun ktn--set-cursor-red ()
   (setq ktn--saved-cursor-color (or ktn--saved-cursor-color (frame-parameter nil 'cursor-color) (face-attribute 'cursor :background)))
@@ -181,8 +228,7 @@
   (ktn--state-get :candidate-index))
 
 ;;; 前後の候補へ移動する関数
-;;;###autoload
-(defun ktn-prev-candidate ()
+(defun ktn-previous-candidate ()
   "Move to the previous conversion candidate."
   (interactive)
   (when (ktn--mode-p 'converting)
@@ -193,7 +239,6 @@
         (ktn--update-inline-display)
         (ktn--show-candidates-window)))))
 
-;;;###autoload
 (defun ktn-next-candidate ()
   "Move to the next conversion candidate."
   (interactive)
@@ -205,7 +250,6 @@
         (ktn--update-inline-display)
         (ktn--show-candidates-window)))))
 
-;;;###autoload
 (defun ktn-next-page ()
   "Move to the next page of candidates."
   (interactive)
@@ -218,8 +262,7 @@
       (ktn--update-inline-display)
       (ktn--show-candidates-window))))
 
-;;;###autoload
-(defun ktn-prev-page ()
+(defun ktn-prior-page ()
   "Move to the previous page of candidates."
   (interactive)
   (when (ktn--mode-p 'converting)
@@ -230,31 +273,29 @@
       (ktn--update-inline-display)
       (ktn--show-candidates-window))))
 
-;;;###autoload
 (defun ktn-katakana-convert-or-insert ()
-  "Convert current headword to Katakana if in headword mode, otherwise insert 'q'."
   (interactive)
+  "Convert current headword to Katakana if in headword mode, otherwise insert 'q'."
   (if (not (ktn--mode-p 'headword))
       (insert "q")
-    (let* ((raw  (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
+    ;; 1. 残っているローマ字バッファを見出し語バッファへ結合
+    (unless (string-empty-p (ktn--state-get :roma-buffer))
+      (ktn--state-set :headword-buffer (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
+      (ktn--state-set :roma-buffer ""))
+    ;; 2. 末尾の "n" を「ん」に変換
+    (when (string-suffix-p "n" (ktn--state-get :headword-buffer))
+      (ktn--state-set :headword-buffer (concat (substring (ktn--state-get :headword-buffer) 0 -1) "ん")))
+
+    ;; 3. 結合・確定されたひらがなをカタカナに変換して挿入
+    (let* ((raw  (ktn--state-get :headword-buffer))
            (kata (ktn--hiragana-to-katakana raw)))
       (ktn--cleanup-headword)
       (insert kata))))
 
-;;; TABキーによる補完候補のサイクル補完関数
-;;;###autoload
-(defun ktn-complete ()
-  "Cycle through completion candidates (works in both headword and converting modes)."
+(defun ktn--headword-completion ()
   (interactive)
-  (cond
-   ;; 0. hassamu
-   ((ktn--state-get :hassamu-active-p)
-    (ktn--hassamu-accept-current))
-
-   ;; 1. 見出し語入力中の場合：既存の補完候補リストを回す
-   ((and (ktn--mode-p 'headword) (string-empty-p (ktn--state-get :okuri-roma-first)))
-    (let ((current-input (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer))))
-      (ktn--ensure-completion-cands current-input))
+  (when (string-empty-p (ktn--state-get :okuri-roma-first))
+    (ktn--ensure-completion-cands (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
     (let ((cands (ktn--state-get :completion-cands)))
       (when (and cands (> (length cands) 0))
         (let* ((idx (ktn--state-get :completion-index))
@@ -265,27 +306,7 @@
           (ktn--state-set :roma-buffer "")
           (ktn--update-inline-display)
           (ktn--show-completion-window)
-          ))))
-
-   ;; 2. 変換中（converting）の場合：プレフィックス補完候補をベースに見出し語を切り替える
-   ((ktn--mode-p 'converting)
-    (let* ((current-head (ktn--state-get :headword-buffer))
-           (_ (ktn--ensure-completion-cands current-head))
-           (cands (ktn--state-get :completion-cands)))
-      (when (and cands (> (length cands) 0))
-        (let* ((idx (ktn--state-get :completion-index))
-               (next-idx (mod (1+ idx) (length cands)))
-               (chosen (nth next-idx cands)))
-          (ktn--state-set :completion-index next-idx)
-          (ktn--state-set :headword-buffer chosen)
-          ;; 新しい見出し語で辞書検索をやり直し、変換モードを維持したまま候補を更新
-          (let ((new-cands (ktn-search-jisyo-combined chosen)))
-            (when new-cands
-              (ktn--state-set :candidates new-cands)
-              (ktn--state-set :candidate-index 0)
-              (ktn--update-inline-display)
-              (when (>= (ktn--state-get :henkan-count) 2)
-                (ktn--show-candidates-window))))))))))
+          )))))
 
 (defun ktn--prompt-dict-registration ()
   (let* ((enable-recursive-minibuffers t)
@@ -306,57 +327,148 @@
           (message "新しい単語を辞書に登録しました: [%s] -> %s" midasi user-word))
       (ktn-quit))))
 
-;;;###autoload
-(defun ktn-insert ()
-  "Insert router powered by FSM state dispatch."
+(defun ktn--lookup-dispatch (ch)
+  "キーイベント CH にマッチするディスパッチテーブルのエントリを検索。"
+  (cl-find-if (lambda (entry)
+                (let ((keys (car entry)))
+                  (if (listp keys)
+                      (memq ch keys)
+                    (eq ch keys))))
+              ktn-dispatch-table))
+
+;;; 各種特殊キーのハンドラ（動的な状態分岐をカプセル化）
+(defun ktn-return-key-handler ()
+  "RET / C-m 打鍵時の処理。モード中なら確定+改行、通常なら改行。"
+  (interactive)
+  (if (ktn--state-get :mode)
+      (ktn-kakutei-and-newline)
+    (newline)))
+
+(defun ktn-tab-key-handler ()
+  "TAB 打鍵時の処理。状態に応じた補完やインサートに分岐。"
+  (interactive)
+  (cond
+   ((ktn--state-get :hassamu-active-p)
+    (when (fboundp #'ktn--hassamu-accept-current)
+      (ktn--hassamu-accept-current)))
+   ((ktn--mode-p 'headword)
+    (ktn--headword-completion))
+   (t
+    (insert "\t"))))
+
+(defun ktn-backspace-handler ()
+  "Delete character backward in headword mode or normal mode."
+  (interactive)
+  (cond
+   ((ktn--mode-p 'converting)
+    (ktn-quit))
+   ((ktn--mode-p 'headword)
+    (cond
+     ;; 1. ローマ字バッファに文字がある場合はそこから1文字削る
+     ((not (string-empty-p (ktn--state-get :roma-buffer)))
+      (let ((roma (ktn--state-get :roma-buffer)))
+        (ktn--state-set :roma-buffer (substring roma 0 -1))
+        (ktn--update-inline-display)))
+     ;; 2. 見出し語バッファに文字がある場合はそこから1文字削る
+     ((not (string-empty-p (ktn--state-get :headword-buffer)))
+      (let ((hw (ktn--state-get :headword-buffer)))
+        (ktn--state-set :headword-buffer (substring hw 0 -1))
+        (ktn--update-inline-display))
+      (when (string-empty-p (ktn--state-get :headword-buffer))
+        (ktn--cleanup-headword)))
+     (t
+      (ktn--cleanup-headword))))
+   (t
+    (backward-delete-char 1))))
+
+;; | 現在の状態              | 入力 / イベント    | 次の状態       | アクション / 備考                  |
+;; |-------------------------|--------------------|----------------|------------------------------------|
+;; | 初期状態 (Emacs normal) | `C-x C-j`          | ktn-mode       | かな入力のため ktn-mode へ         |
+;; | ktn-mode                | `C-x C-j`          | 初期状態       | ktn-mode を抜け、初期状態へ        |
+;; | ktn-mode                | a-z.*              | ktn-mode       | 直接ローマ字かな変換               |
+;; | ktn-mode                | A-Z                | ▽モード       | 見出し語入力を開始                 |
+;; | ▽モード                | 小文字             | ▽モード       | ローマ字かな変換                   |
+;; | ▽モード                | `C-g`              | ktn-mode       | ▽モードを破棄して戻る             |
+;; | ▽モード                | TAB                | ktn-mode       | 見出し語を補完                     |
+;; | ▽モード                | `C-j` / `RET`      | ktn-mode       | ▽モードを破棄して戻る(溜まった見出し語はバッファ挿入) |
+;; | ▽モード                | `SPC`              | ▼モード       | 見出し語を確定し、漢字候補を表示   |
+;; | ▼モード                | `C-g`              | ▽モード       | 漢字変換を取り消し、見出し語へ戻る |
+;; | ▼モード                | `C-j` / `RET`      | ktn-mode       | 漢字候補を確定し、ktn-mode へ      |
+;; | ▼モード                | `SPC` (次候補あり) | ▼モード       | 次の変換候補を表示                 |
+;; | ▼モード                | `x`   (前候補あり) | ▼モード       | ひとつ前の変換候補を表示           |
+;; | ▼モード                | `SPC` (候補なし)   | 辞書登録モード | 個人辞書登録へ移行                 |
+;; | 辞書登録モード          | 登録完了           | ktn-mode       | 登録語を反映し、ktn-mode へ戻る    |
+
+;; stateDiagram-v2
+;;     [*] --> Normal : ktn-mode有効
+
+;;     state Normal {
+;;         [*] --> 待機中
+;;         待機中 --> 待機中 : 小文字/通常入力 (a-z) <br/>[直接ローマ字かな変換・挿入]
+;;     }
+
+;;     %% Normal からの遷移
+;;     Normal --> Headword : 大文字入力 (A-Z) <br/>[▽ 見出し語入力開始]
+
+;;     state Headword {
+;;         [*] --> 見出し入力
+;;         見出し入力 --> 見出し入力 : ローマ字入力 / 継続
+;;         見出し入力 --> 見出し入力 : TAB <br/>[補完候補の循環]
+;;     }
+
+;;     %% Headword からの遷移
+;;     Headword --> Headword : 大文字入力 (A-Z) <br/>[送り仮名入力開始 / ▽再トリガー]
+;;     Headword --> Converting : SPC <br/>[漢字変換開始・候補取得]
+;;     Headword --> DictRegister : SPC (候補なし) <br/>[未登録語の辞書登録へ]
+;;     Headword --> Normal : C-j / RET <br/>[入力を確定してバッファへ挿入]
+;;     Headword --> Normal : C-g <br/>[入力を破棄・キャンセル]
+
+;;     state Converting {
+;;         [*] --> 候補選択
+;;         候補選択 --> 候補選択 : SPC / x <br/>[次/前候補へ移動・ページ送り]
+;;     }
+
+;;     %% Converting からの遷移
+;;     Converting --> Converting : SPC (末尾候補) <br/>[辞書登録へ移行]
+;;     Converting --> Headword : 大文字入力 (A-Z) <br/>[現変換を確定 ＋ 新規 ▽ 開始]
+;;     Converting --> Headword : C-g <br/>[変換キャンセルして ▽ へ戻る]
+;;     Converting --> Normal : C-j / RET <br/>[選択候補を確定して通常モードへ]
+
+;;     state DictRegister {
+;;         [*] --> ミニバッファ入力
+;;     }
+
+;;     DictRegister --> Normal : 登録完了 / C-g <br/>[新単語を登録して通常モードへ]
+
+(defun ktn-handle-input ()
+  "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
   (interactive)
   (barf-if-buffer-read-only)
+  (let* ((ch last-command-event)
+         (matched (ktn--lookup-dispatch ch)))
 
-  ;; +----------------+-------------------------------+----------------------------------------------------------------+
-  ;; | FSM 状態       | 概要                          | トリガー / 挙動                                                |
-  ;; +----------------+-------------------------------+----------------------------------------------------------------+
-  ;; | (3) normal (t) | 通常モード                    | - ktn--handle-normal-mode で通常のテキスト入力処理             |
-  ;; |                |                               | - 入力結果で headword 状態へ遷移した場合はインライン表示を更新 |
-  ;; +----------------+-------------------------------+----------------------------------------------------------------+
-  ;; | (2) headword   | 見出し語入力モード            | - ktn--handle-headword-mode でローマ字/ひらがな処理            |
-  ;; |                | (インラインに "▽" 表示)      | - ktn--update-inline-display で表示を最新化                    |
-  ;; +----------------+-------------------------------+----------------------------------------------------------------+
-  ;; | (1) converting | 変換中モード                  | - 数字キー(1-7): 該当候補を選択して確定                        |
-  ;; |                | (候補選択ウィンドウが表示中)  | - 'x' / 'X'    : 前の候補へ移動                                |
-  ;; |                |                               | - その他のキー : 現在の候補で確定。FSMリセットして打鍵キーイベ |
-  ;; |                |                               |                  ントをそのまま転送                            |
-  ;; +----------------+-------------------------------+----------------------------------------------------------------+
-
-  (let ((ch last-command-event))
     (cond
+     ;; 1. テーブルにヒットした場合、対応するコマンドを実行
+     (matched
+      (call-interactively (cdr matched)))
 
-     ;; (1) Converting mode: Candidate selection and navigation
-     ((ktn--mode-p 'converting)
-      (let* ((page-size (length ktn-select-keys))
-             (current-page (/ (ktn--state-get :candidate-index) page-size))
-             (page-start (* current-page page-size))
-             (key-idx (cl-position ch ktn-select-keys)))
-        (cond
-         (key-idx
-          (let ((target-idx (+ page-start key-idx)))
-            (when (< target-idx (length (ktn--state-get :candidates)))
-              (ktn--state-set :candidate-index target-idx)
-              (ktn-kakutei))))
-         ((or (eq ch ?x) (eq ch ?X)) (ktn-prev-candidate))
-         (t (ktn-kakutei) (ktn--state-reset) (push ch unread-command-events)))))
-
-     ;; (2) Headword input mode: Handling romaji/hiragana input and inline display
+     ;; 2. ▽ 見出し語入力モード中の文字入力（ローマ字など）
      ((ktn--mode-p 'headword)
       (ktn--handle-headword-mode ch #'ktn-start-henkan)
       (ktn--update-inline-display))
 
-     ;; (3) Normal mode: Standard text editing and transition triggers
+     ;; 3. ▽ 見出し語入力モード中の文字入力（ローマ字など）
+     ((ktn--mode-p 'converting)
+      (ktn--handle-converting-mode ch)
+      (ktn--update-inline-display))
+
+     ;; 4. 通常モードの文字入力など
      (t
       (ktn--handle-normal-mode ch)
       (when (ktn--mode-p 'headword)
         (ktn--update-inline-display))))))
 
-;;;###autoload
+
 (defun ktn-start-henkan ()
   "Start conversion or cycle through candidates with SPC."
   (interactive)
@@ -391,19 +503,24 @@
       (when (>= (ktn--state-get :henkan-count) 2) (ktn--show-candidates-window))))
    (t (insert " "))))
 
-;;;###autoload
 (defun ktn-kakutei ()
   "Commit current headword or conversion result and insert into buffer."
   (interactive)
-  (when (ktn--state-get :mode)
+  (when (ktn--state-get :mode) ; nil 以外の場合
     (let* ((midasi (if (not (string-empty-p (ktn--state-get :okuri-roma-first)))
                        (concat (ktn--state-get :headword-buffer) (ktn--state-get :okuri-roma-first))
                      (ktn--state-get :headword-buffer)))
-           (text (cond ((ktn--mode-p 'converting) (car (nth (ktn--state-get :candidate-index) (ktn--state-get :candidates))))
-                       (t (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)
-                                  (ktn--state-get :okuri-buffer) (ktn--state-get :okuri-roma-buffer)))))
+
+           (text (cond ((ktn--mode-p 'converting)
+                        (car (nth (ktn--state-get :candidate-index) (ktn--state-get :candidates))))
+                       (t
+                        (concat (ktn--state-get :headword-buffer)
+                                (ktn--state-get :roma-buffer)
+                                (ktn--state-get :okuri-buffer)
+                                (ktn--state-get :okuri-roma-buffer)))))
            (pos (and (markerp (ktn--state-get :headword-start-marker))
                      (marker-position (ktn--state-get :headword-start-marker)))))
+
       (when (ktn--mode-p 'converting)
         (let ((cands-hash (gethash midasi ktn--stats-data)))
           (unless cands-hash
@@ -411,8 +528,8 @@
             (puthash midasi cands-hash ktn--stats-data))
           (puthash text (1+ (gethash text cands-hash 0)) cands-hash)
           (ktn-save-stats)))
-      (ktn--cleanup-headword)
 
+      (ktn--cleanup-headword)
       (when pos
         (goto-char pos)
         (insert text))
@@ -421,7 +538,6 @@
         (ktn--hassamu-on-kakutei text))
       )))
 
-;;;###autoload
 (defun ktn-kakutei-and-newline ()
   "Commit current headword/conversion if active, otherwise insert a newline."
   (interactive)
@@ -431,67 +547,37 @@
         (newline))
     (newline)))
 
-;;;###autoload
-(defun ktn-backspace ()
-  "Delete character backward in headword mode or normal mode."
-  (interactive)
-  (cond
-   ((ktn--mode-p 'converting)
-    (ktn-quit))
-   ((ktn--mode-p 'headword)
-    (cond
-     ;; 1. ローマ字バッファに文字がある場合はそこから1文字削る
-     ((not (string-empty-p (ktn--state-get :roma-buffer)))
-      (let ((roma (ktn--state-get :roma-buffer)))
-        (ktn--state-set :roma-buffer (substring roma 0 -1))
-        (ktn--update-inline-display)))
-     ;; 2. 見出し語バッファに文字がある場合はそこから1文字削る
-     ((not (string-empty-p (ktn--state-get :headword-buffer)))
-      (let ((hw (ktn--state-get :headword-buffer)))
-        (ktn--state-set :headword-buffer (substring hw 0 -1))
-        (ktn--update-inline-display))
-      (when (string-empty-p (ktn--state-get :headword-buffer))
-        (ktn--cleanup-headword)))
-     (t
-      (ktn--cleanup-headword))))
-   (t
-    (backward-delete-char 1))))
 
-;;;###autoload
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."
   (interactive)
   (cond
+   ((ktn--mode-p 'headword)
+    (ktn--cleanup-headword))
+
    ((ktn--mode-p 'converting)
-    (ktn--state-set :mode 'headword)
-    (ktn--state-set :candidates nil)
+    (ktn--state-set :mode            'headword)
+    (ktn--state-set :candidates      nil)
     (ktn--state-set :candidate-index 0)
+
     (message "")
+    (ktn--close-candidate-window)
     (ktn--update-inline-display))
-   ((ktn--mode-p 'headword) (ktn--cleanup-headword))
+
    (t (if (string-empty-p (ktn--state-get :roma-buffer))
           (keyboard-quit)
-        (ktn--state-set :roma-buffer "")))))
+        (ktn--state-set :roma-buffer "")))
+   ))
 
 ;;; Keymap & Minor-mode Definition
 (defvar ktn-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map [remap self-insert-command] #'ktn-insert)
-    (define-key map (kbd "C-g") #'ktn-quit)
-    (define-key map (kbd "C-j") #'ktn-kakutei)
-    (define-key map (kbd "RET") #'ktn-kakutei-and-newline)
-    (define-key map (kbd "C-m") #'ktn-kakutei-and-newline)
-    (define-key map (kbd "SPC") #'ktn-start-henkan)
-    (define-key map (kbd "C-h") #'ktn-backspace)
-    (define-key map (kbd "q")   #'ktn-katakana-convert-or-insert)
+    (define-key map [remap self-insert-command] #'ktn-handle-input)
 
-    (define-key map (kbd "TAB")       #'ktn-complete)
-    (define-key map (kbd "<tab>")     #'ktn-complete)
-    (define-key map (kbd "<backtab>") #'ktn-complete-headword-backward)
-    (define-key map (kbd "S-TAB")     #'ktn-complete-headword-backward)
-
-    (define-key map (kbd "<next>")    #'ktn-next-page) ;PageDown
-    (define-key map (kbd "<prior>")   #'ktn-prev-page) ;PageUp
+    (dolist (key '("C-g" "C-h" "C-j" "RET" "C-m" "SPC" "q"
+                   "TAB" "<tab>" "<backtab>" "S-TAB"
+                   "<next>" "<prior>"))
+      (define-key map (kbd key) #'ktn-handle-input))
     map)
   "Keymap for `ktn-mode`.")
 
