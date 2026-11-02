@@ -3,6 +3,7 @@
 ;;; Commentary:
 ;; DDKKK/TEST/test-utils.el を参考にさせていただきました。
 
+(require 'cl-lib)
 (require 'ert)
 (require 'json)
 (require 'kotoni)
@@ -50,16 +51,16 @@
            (ktn-stats-file (make-temp-file "ktn-stats" nil ".json" "{}"))
            (ktn-dictionaries nil)
            (ktn--stats-data (make-hash-table :test 'equal))
-           (_ (setf (ktn-dictionary-data ktn--system-jisyo-instance) nil
+           (_ (setf (ktn-dictionary-data   ktn--system-jisyo-instance) nil
                     (ktn-dictionary-buffer ktn--system-jisyo-instance) nil)))
       (unwind-protect
           (progn
             (ktn-setup)
-            (dolist (action actions)
-              (cond
-               ((stringp action) (execute-kbd-macro (read-kbd-macro action)))
-               ((functionp action) (funcall action))
-               (t (eval action))))
+            (cl-loop for action in actions
+                     do (cond
+                         ((stringp action) (execute-kbd-macro (read-kbd-macro action)))
+                         ((functionp action) (funcall action))
+                         (t (eval action))))
             (buffer-substring-no-properties (point-min) (point-max)))
         (when (file-exists-p ktn-stats-file)
           (delete-file ktn-stats-file))))))
