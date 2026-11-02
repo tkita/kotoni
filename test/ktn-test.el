@@ -136,6 +136,12 @@
 ;;            "K a n j i . C-j")
 ;;   (expected-buffer-string "漢字。"))
 
+(ktn-define-e2e-test ktn-continuous-conversion/test1
+  "変換中に大文字を入力すると、現在の変換を確定して新しい見出し語入力を開始する。"
+  (actions #'ktn-mode
+           "K a n j i SPC S a i C-j")
+  (expected-buffer-string "漢字さい"))
+
 (ktn-define-e2e-test recursive-dict-registration/test1
   "未知の複合語登録時に再帰的な辞書登録を行える。"
   (actions #'ktn-mode
