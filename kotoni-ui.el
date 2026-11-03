@@ -676,9 +676,9 @@
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
   (when (ktn--load-stats)
-    (unless ktn-roma-table (ktn-setup-roma-table))
-    (setf (ktn-dictionary-path ktn--system-jisyo-instance) ktn-jisyo-file)
-    (setq ktn-dictionaries (list ktn--system-jisyo-instance))
+    (unless ktn-roma-table
+      (ktn-setup-roma-table))
+    (setq ktn-dictionaries (list (make-ktn-dictionary :path ktn-jisyo-file :data nil)))
     (unless (memq #'ktn-save-stats kill-emacs-hook)
       (add-hook 'kill-emacs-hook #'ktn-save-stats))
     t))

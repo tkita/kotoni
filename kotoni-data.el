@@ -17,8 +17,8 @@
   "Minimal SKK clone focusing on modeline and basic insertion."
   :group 'input-method)
 
-(defcustom ktn-jisyo-file (expand-file-name "~/.emacs.d/skk-large-jisyo")
-  "Path to SKK Dictionary file (Text or JSON)."
+(defcustom ktn-jisyo-file (expand-file-name "~/.emacs.d/jisyo.json")
+  "Path to JSON Dictionary file."
   :type 'file
   :group 'kotoni)
 
@@ -33,11 +33,9 @@
 
 ;;; 辞書構造体
 (cl-defstruct ktn-dictionary
-  path buffer data)
+  path data)
 
 (defvar ktn-dictionaries nil)
-(defvar ktn--system-jisyo-instance
-  (make-ktn-dictionary :path nil :buffer nil :data nil))
 
 ;;; ローマ字テーブル定義
 (defvar ktn-default-roma-table
@@ -185,43 +183,21 @@
 (defun ktn-dictionary-search (dict midasi &optional is-okuri)
   (let ((file (ktn-dictionary-path dict)))
     (when (and file (file-exists-p file))
-      (if (string-suffix-p ".json" file t)
-          (let ((data (ktn-dictionary-data dict)))
-            (unless data
-              (with-temp-buffer
-                (insert-file-contents file)
-                (setq data (json-parse-buffer :object-type 'hash-table))
-                (setf (ktn-dictionary-data dict) data)))
-            (when (hash-table-p data)
-              (let* ((section-key (if is-okuri "okuri_ari" "okuri_nasi"))
-                     (section (gethash section-key data))
-                     (raw-cands (cond ((hash-table-p section) (gethash midasi section))
-                                     ((hash-table-p data) (gethash midasi data))
-                                     (t nil))))
-                (when raw-cands (ktn--parse-candidate-items raw-cands)))))
-        (let ((buf (ktn-dictionary-buffer dict)))
-          (unless (and (bufferp buf) (buffer-live-p buf))
-            (setq buf (get-buffer-create (concat " *ktn-" (file-name-nondirectory file) "*")))
-            (setf (ktn-dictionary-buffer dict) buf)
-            (with-current-buffer buf
-              (let ((inhibit-read-only t))
-                (erase-buffer)
-                (insert-file-contents file))
-              (read-only-mode 1)))
-          (when (and (bufferp buf) (buffer-live-p buf))
-            (with-current-buffer buf
-              (save-excursion
-                (goto-char (point-min))
-                (when (re-search-forward (concat "^" (regexp-quote midasi) " /") nil t)
-                  (let* ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
-                         (body (and (string-match "/\\(.+\\)/$" line) (match-string 1 line)))
-                         (clean-body (when body (replace-regexp-in-string "\\[[^]]*\\]" "" body)))
-                         (filtered-cands (when clean-body (split-string clean-body "/" t))))
-                    (mapcar (lambda (item)
-                              (if (string-match "^\\([^;]+\\);\\(.*\\)$" item)
-                                  (cons (match-string 1 item) (match-string 2 item))
-                                (cons item nil)))
-                            filtered-cands)))))))))))
+      (let ((data (ktn-dictionary-data dict)))
+        (unless data
+          (with-temp-buffer
+            (insert-file-contents file)
+            (setq data (json-parse-buffer :object-type 'hash-table))
+            (setf (ktn-dictionary-data dict) data)))
+        (when (hash-table-p data)
+          (let* ((section-key (if is-okuri "okuri_ari" "okuri_nasi"))
+                 (section (gethash section-key data))
+                 (raw-cands (cond ((hash-table-p section) (gethash midasi section))
+                                  ((hash-table-p data)    (gethash midasi data))
+                                  (t                       nil))))
+            (when raw-cands
+              (ktn--parse-candidate-items raw-cands)))))
+      )))
 
 (defun ktn-search-jisyo-combined (midasi &optional is-okuri)
   (let ((seen (make-hash-table :test 'equal))
@@ -269,7 +245,6 @@
             (push (list word annot source) system-candidates)))))
     (append (nreverse stat-candidates) (nreverse system-candidates))))
 
-;;; 修正：テキスト形式およびJSON形式の両方に対応したヘッドワード補完検索
 (defun ktn--complete-search-headword (prefix)
   (let ((seen (make-hash-table :test 'equal))
         stats-results system-results)
@@ -281,46 +256,25 @@
              ktn--stats-data)
     (setq stats-results (sort stats-results #'string<))
 
-    ;; 2. システム辞書から検索 (JSON / テキスト両対応)
+    ;; 2. システム辞書から検索
     (dolist (dict ktn-dictionaries)
       (let ((file (ktn-dictionary-path dict)))
         (when (and file (file-exists-p file))
-          (if (string-suffix-p ".json" file t)
-              (let ((data (ktn-dictionary-data dict)))
-                (unless data
-                  (with-temp-buffer
-                    (insert-file-contents file)
-                    (setq data (json-parse-buffer :object-type 'hash-table))
-                    (setf (ktn-dictionary-data dict) data)))
-                (when (hash-table-p data)
-                  (dolist (section-key '("okuri_nasi" "okuri_ari"))
-                    (let ((section (gethash section-key data)))
-                      (when (hash-table-p section)
-                        (maphash (lambda (midasi _)
-                                   (when (and (string-prefix-p prefix midasi) (not (gethash midasi seen)))
-                                     (puthash midasi t seen)
-                                     (push midasi system-results)))
-                                 section))))))
-            ;; テキスト形式辞書バッファからの前方一致検索
-            (let ((buf (ktn-dictionary-buffer dict)))
-              (unless (and (bufferp buf) (buffer-live-p buf))
-                (setq buf (get-buffer-create (concat " *ktn-" (file-name-nondirectory file) "*")))
-                (setf (ktn-dictionary-buffer dict) buf)
-                (with-current-buffer buf
-                  (let ((inhibit-read-only t))
-                    (erase-buffer)
-                    (insert-file-contents file))
-                  (read-only-mode 1)))
-              (when (and (bufferp buf) (buffer-live-p buf))
-                (with-current-buffer buf
-                  (save-excursion
-                    (goto-char (point-min))
-                    (let ((rx (concat "^" (regexp-quote prefix) "[^ \n/]*")))
-                      (while (re-search-forward rx nil t)
-                        (let ((midasi (match-string 0)))
-                          (unless (gethash midasi seen)
-                            (puthash midasi t seen)
-                            (push midasi system-results)))))))))))))
+          (let ((data (ktn-dictionary-data dict)))
+            (unless data
+              (with-temp-buffer
+                (insert-file-contents file)
+                (setq data (json-parse-buffer :object-type 'hash-table))
+                (setf (ktn-dictionary-data dict) data)))
+            (when (hash-table-p data)
+              (dolist (section-key '("okuri_nasi" "okuri_ari"))
+                (let ((section (gethash section-key data)))
+                  (when (hash-table-p section)
+                    (maphash (lambda (midasi _)
+                               (when (and (string-prefix-p prefix midasi) (not (gethash midasi seen)))
+                                 (puthash midasi t seen)
+                                 (push midasi system-results)))
+                             section)))))))))
     (setq system-results (sort system-results #'string<))
     (append stats-results system-results)))
 
