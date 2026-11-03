@@ -50,17 +50,19 @@
     (let* ((ktn-jisyo-file (expand-file-name "ktn-test-jisyo.json"))
            (ktn-stats-file (make-temp-file "ktn-stats" nil ".json" "{}"))
            (ktn-dictionaries nil)
-           (ktn--stats-data (make-hash-table :test 'equal))
-           (_ (setf (ktn-dictionary-data   ktn--system-jisyo-instance) nil
-                    (ktn-dictionary-buffer ktn--system-jisyo-instance) nil)))
+           (ktn--stats-data (make-hash-table :test 'equal)))
+
       (unwind-protect
           (progn
             (ktn-setup)
             (cl-loop for action in actions
                      do (cond
-                         ((stringp action) (execute-kbd-macro (read-kbd-macro action)))
-                         ((functionp action) (funcall action))
-                         (t (eval action))))
+                         ((stringp action)
+                          (execute-kbd-macro (read-kbd-macro action)))
+                         ((functionp action)
+                          (funcall action))
+                         (t
+                          (eval action))))
             (buffer-substring-no-properties (point-min) (point-max)))
         (when (file-exists-p ktn-stats-file)
           (delete-file ktn-stats-file))))))
