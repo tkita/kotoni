@@ -14,15 +14,45 @@
 (require 'kotoni-data)
 (require 'kotoni-fsm)
 
-(defface ktn-headword-face '((t (:inherit underline))) "Face for ▽/▼ headword overlay." :group 'kotoni)
-(defface ktn-selected-face '((t (:inherit highlight))) "Face for currently selected candidate." :group 'kotoni)
-(defface ktn-completion-preview-face '((t (:foreground "#777777"))) "Face for dynamic completion preview." :group 'kotoni)
-(defface ktn-completion-base-face '((t (:inherit default))) "Face for typed prefix part.")
-(defface ktn-completion-rest-face '((t (:inherit font-lock-keyword-face :weight bold))) "Face for remaining part.")
-(defface ktn-index-face '((t (:background "white" :foreground "black" :underline t))) "Face for candidate index keys." :group 'kotoni)
+(defface ktn-headword-face
+  '((t (:inherit underline)))
+  "Face for ▽/▼ headword overlay."
+  :group 'kotoni)
 
-(defcustom ktn-indicator " [▼]" "Modeline indicator when `ktn-mode` is active." :type 'string :group 'kotoni)
-(defcustom ktn-show-candidates-nth-henkan 3 "何回目のスペース打鍵で候補一覧を表示するか" :type 'integer :group 'kotoni)
+(defface ktn-selected-face
+  '((t (:inherit highlight)))
+  "Face for currently selected candidate."
+  :group 'kotoni)
+
+(defface ktn-completion-preview-face
+  '((t (:foreground "#777777")))
+  "Face for dynamic completion preview."
+  :group 'kotoni)
+
+(defface ktn-completion-base-face
+  '((t (:inherit default)))
+  "Face for typed prefix part."
+  :group 'kotoni)
+
+(defface ktn-completion-rest-face
+  '((t (:inherit font-lock-keyword-face :weight bold)))
+  "Face for remaining part."
+  :group 'kotoni)
+
+(defface ktn-index-face
+  '((t (:background "white" :foreground "black" :underline t)))
+  "Face for candidate index keys."
+  :group 'kotoni)
+
+(defcustom ktn-indicator " [▼]"
+  "Modeline indicator when `ktn-mode` is active."
+  :type 'string
+  :group 'kotoni)
+
+(defcustom ktn-show-candidates-nth-henkan 3
+  "何回目の SPC 打鍵で候補一覧を表示するか"
+  :type 'integer
+  :group 'kotoni)
 
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 (defvar-local ktn--saved-cursor-color nil)
@@ -195,34 +225,64 @@
         (with-current-buffer buf (let ((inhibit-read-only t)) (erase-buffer) (insert content)))
         (when (window-live-p win) (with-selected-window win (fit-window-to-buffer win)))))))
 
+(defun ktn--format-completion-candidate (candidate base-string)
+  "CANDIDATE のうち BASE-STRING に一致する部分を `ktn-completion-base-face` で、
+残りの部分を `ktn-completion-rest-face` で装飾して返す。"
+  (let* ((base     (or base-string ""))
+         (base-len (length base)))
+    (if (and (>  base-len 0)
+             (<= base-len (length candidate))
+             (string-prefix-p base base-string))
+        (concat
+         (propertize (substring candidate 0 base-len) 'face 'ktn-completion-base-face)
+         (propertize (substring candidate base-len)   'face 'ktn-completion-rest-face))
+      ;; 一致しない場合は全体を rest-face またはデフォルトにする
+      (propertize candidate 'face 'ktn-completion-rest-face))))
+
 (defun ktn--show-completion-window ()
-  "ヘッドワード入力中の補完候補一覧を最大7件ずつのページ単位でサイドウィンドウに表示する[cite: 2, 4]。"
-  (let ((cands (ktn--state-get :completion-cands)))
+  "見出し語入力中の補完候補一覧を最大7件ずつのページ単位でサイドウィンドウに表示する。"
+  (let ((cands    (ktn--state-get :completion-cands))
+        (base-str (ktn--state-get :headword-buffer))) ; 現在入力中のベース文字列を取得
     (if (not cands)
         (ktn--close-candidate-window)
-      (let* ((total (length cands))
-             (page-size (length ktn-select-keys))
-             (current-idx (ktn--state-get :completion-index))
+      (let* ((total        (length cands))
+             (page-size    (length ktn-select-keys))
+             (current-idx  (ktn--state-get :completion-index))
              (current-page (/ current-idx page-size))
-             (start (* current-page page-size))
-             (end (min total (+ start page-size)))
+             (start        (* current-page page-size))
+             (end          (min total (+ start page-size)))
              parts)
         (cl-loop for i from start below end
                  for cand = (nth i cands)
                  for key-char = (nth (- i start) ktn-select-keys)
                  for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
-                 for formatted = (concat "   " key-str " " cand)
-                 do (push (if (= i current-idx) (propertize formatted 'face 'ktn-selected-face) formatted) parts))
-        (let* ((buf (ktn--get-or-create-candidate-buffer))
-               (win (display-buffer buf))
-               (win-width (if (window-live-p win) (window-width win) (frame-width)))
-               (page-str (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
-               (padding (max 0 (- win-width (string-width page-str) 2)))
+                 ;; 候補文字列をベース文字列に基づいてハイライト装飾する
+                 for formatted-cand = (ktn--format-completion-candidate cand base-str)
+                 for formatted = (concat "    " key-str " " formatted-cand)
+                 do (push (if (= i current-idx)
+                              (propertize formatted 'face 'ktn-selected-face)
+                            formatted)
+                          parts))
+
+        (let* ((buf                (ktn--get-or-create-candidate-buffer))
+               (win                (display-buffer buf))
+               (win-width          (if (window-live-p win)
+                                       (window-width win)
+                                     (frame-width)))
+               (page-str           (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
+               (padding            (max 0 (- win-width (string-width page-str) 2)))
                (right-aligned-page (concat (make-string padding ?\s) page-str))
-               (content (concat (mapconcat #'identity (nreverse parts) "\n")
-                                (if (> total page-size) (concat "\n" right-aligned-page) ""))))
-          (with-current-buffer buf (let ((inhibit-read-only t)) (erase-buffer) (insert content)))
-          (when (window-live-p win) (with-selected-window win (fit-window-to-buffer win))))))))
+               (content            (concat (mapconcat #'identity (nreverse parts) "\n")
+                                           (if (> total page-size)
+                                               (concat "\n" right-aligned-page)
+                                             ""))))
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert content)))
+          (when (window-live-p win)
+            (with-selected-window win
+              (fit-window-to-buffer win))))))))
 
 (defun ktn--state-index-check ()
   (ktn--state-get :candidate-index))
@@ -292,21 +352,49 @@
       (ktn--cleanup-headword)
       (insert kata))))
 
+;; (defun ktn--headword-completion ()
+;;   (when (string-empty-p (ktn--state-get :okuri-roma-first))
+;;     (ktn--ensure-completion-cands (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
+;;     (let ((cands (ktn--state-get :completion-cands)))
+;;       (when (and cands (> (length cands) 0))
+;;         (let* ((idx (ktn--state-get :completion-index))
+;;                (next-idx (mod (1+ idx) (length cands)))
+;;                (chosen (nth next-idx cands)))
+;;           (ktn--state-set :completion-index next-idx)
+;;           (ktn--state-set :headword-buffer chosen)
+;;           (ktn--state-set :roma-buffer "")
+;;           (ktn--update-inline-display)
+;;           (ktn--show-completion-window)
+;;           )))))
 (defun ktn--headword-completion ()
-  (interactive)
+  "見出し語入力中のTAB補完処理。
+1回目のTAB打鍵ではインライン更新のみ行い、
+2回目以降のTAB打鍵で *candidates* ウィンドウを開いて候補を循環させる。"
   (when (string-empty-p (ktn--state-get :okuri-roma-first))
     (ktn--ensure-completion-cands (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
     (let ((cands (ktn--state-get :completion-cands)))
       (when (and cands (> (length cands) 0))
-        (let* ((idx (ktn--state-get :completion-index))
-               (next-idx (mod (1+ idx) (length cands)))
-               (chosen (nth next-idx cands)))
-          (ktn--state-set :completion-index next-idx)
-          (ktn--state-set :headword-buffer chosen)
-          (ktn--state-set :roma-buffer "")
-          (ktn--update-inline-display)
-          (ktn--show-completion-window)
-          )))))
+        (let ((tab-count (ktn--state-get :completion-tab-count 0)))
+          (cond
+           ;; 【1回目の TAB 打鍵】: ウィンドウを開かず、インライン更新のみ行う
+           ((= tab-count 0)
+            (ktn--state-set :completion-tab-count 1)
+            (let* ((idx (ktn--state-get :completion-index))
+                   (chosen (nth idx cands)))
+              (ktn--state-set :headword-buffer chosen)
+              (ktn--state-set :roma-buffer "")
+              (ktn--update-inline-display)))
+
+           ;; 【2回目以降の TAB 打鍵】: カウンターを進め、ウィンドウを開いて候補を循環させる
+           (t
+            (let* ((idx (ktn--state-get :completion-index))
+                   (next-idx (mod (1+ idx) (length cands)))
+                   (chosen (nth next-idx cands)))
+              (ktn--state-set :completion-index next-idx)
+              (ktn--state-set :headword-buffer chosen)
+              (ktn--state-set :roma-buffer "")
+              (ktn--update-inline-display)
+              (ktn--show-completion-window)))))))))
 
 (defun ktn--prompt-dict-registration ()
   (let* ((enable-recursive-minibuffers t)
@@ -494,13 +582,17 @@
         (ktn--state-set :candidate-index 0)
         (ktn--state-set :mode 'converting)
         (ktn--update-inline-display))))
+
    ((ktn--mode-p 'converting)
     (ktn--state-set :henkan-count (1+ (ktn--state-get :henkan-count)))
-    (if (>= (1+ (ktn--state-get :candidate-index)) (length (ktn--state-get :candidates)))
+    (if (>= (1+ (ktn--state-get :candidate-index))
+            (length (ktn--state-get :candidates)))
         (ktn--prompt-dict-registration)
       (ktn--state-set :candidate-index (1+ (ktn--state-get :candidate-index)))
       (ktn--update-inline-display)
-      (when (>= (ktn--state-get :henkan-count) 2) (ktn--show-candidates-window))))
+      (when (>= (ktn--state-get :henkan-count)
+                (1- ktn-show-candidates-nth-henkan))
+        (ktn--show-candidates-window))))
    (t (insert " "))))
 
 (defun ktn-kakutei ()
