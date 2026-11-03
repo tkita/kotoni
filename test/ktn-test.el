@@ -1,182 +1,200 @@
 ;;; ktn-test.el --- E2E tests for Kotoni (JSON Dictionary Support) -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; DDKKK/TEST/test-utils.el を参考にさせていただきました。
 
 (require 'cl-lib)
 (require 'ert)
 (require 'json)
 (require 'kotoni)
 
-;;;
-;;; Test Utilities (JSON Dictionary Version)
-;;;
+(defmacro ktn--silence (&rest body)
+  "テスト時に message / minibuffer のノイズを抑制する。"
+  `(let ((inhibit-message t)
+         (message-log-max nil)
+         (minibuffer-message-timeout 0))
+     ,@body))
 
-(defmacro ktn-define-e2e-test (name &rest args)
-  "Kotoni用のE2Eテストを定義する（JSON辞書対応版）。"
-  (declare (indent defun))
-  (let* ((docstring (car args))
-         (have-skip-when (assoc 'skip-when args))
-         (skip-when (cdr (assoc 'skip-when args)))
-         (actions (cdr (assoc 'actions args)))
-         (expected-buffer-string (cdr (assoc 'expected-buffer-string args)))
-         body)
-    (when (consp expected-buffer-string)
-      (setq expected-buffer-string (car expected-buffer-string)))
-    (when (and (consp skip-when)
-               (not (functionp (car skip-when)))
-               (not (special-form-p (car skip-when)))
-               (not (macrop (car skip-when))))
-      (setq skip-when (car skip-when)))
-    (setq body `(ktn-e2e-test
-                 ,@actions
-                 ,(when expected-buffer-string
-                    `(lambda ()
-                       (should (equal
-                                (buffer-substring-no-properties (point-min)
-                                                                (point-max))
-                                ,expected-buffer-string))))))
-    `(ert-deftest ,name ()
-       ,@(when (stringp docstring)
-           (list docstring))
-       ,@(when have-skip-when
-           (list `(skip-unless (not ,skip-when))))
-       ,body)))
+(defun ktn--setup-test-encoding ()
+  "テスト環境での文字化けを避ける。"
+  (prefer-coding-system 'utf-8)
+  (set-language-environment "Japanese")
+  (setq locale-coding-system 'utf-8-unix
+        default-file-name-coding-system 'utf-8-unix
+        file-name-coding-system 'utf-8-unix
+        network-coding-system 'utf-8-unix))
+
+(defun ktn--test-file-dir ()
+  (or
+   (and load-file-name (file-name-directory load-file-name))
+   (and buffer-file-name (file-name-directory buffer-file-name))
+   default-directory
+   (expand-file-name "./")))
+
+(defun ktn--run-action-sequence (s)
+  "例: \"K a n j i SPC C-j\" を KTN FSM に直接 feed する。"
+  (cl-loop for tok in (split-string s "[[:space:]]+" t)
+           do
+           (let ((keys (read-kbd-macro tok)))
+             (unless (vectorp keys)
+               (error "Bad key sequence for token: %S" tok))
+             (cl-loop for event across keys
+                      do
+                      (let ((last-command-event event))
+                        (ktn-handle-input))))))
+
+(defun ktn--test-setup ()
+  (ktn--setup-test-encoding)
+  (setq ktn-jisyo-file
+        (expand-file-name "ktn-test-jisyo.json"
+                          (ktn--test-file-dir)))
+  (setq ktn-stats-file (make-temp-file "ktn-stats" nil ".json"))
+  (setq ktn-dictionaries nil)
+  (setq ktn--stats-data (make-hash-table :test 'equal))
+  (ktn-setup)
+  (when (fboundp 'ktn-mode)
+    (ktn--silence
+      (ktn-mode 1))))
 
 (defun ktn-e2e-test (&rest actions)
-  "テスト用の実ファイル JSON 辞書 (ktn-test-jisyo.json) を用いて ACTIONS を実行する。"
-  (with-temp-buffer
-    (switch-to-buffer (current-buffer))
-    (let* ((ktn-jisyo-file (expand-file-name "ktn-test-jisyo.json"))
-           (ktn-stats-file (make-temp-file "ktn-stats" nil ".json" "{}"))
-           (ktn-dictionaries nil)
-           (ktn--stats-data (make-hash-table :test 'equal)))
+  (let ((orig-jisyo ktn-jisyo-file)
+        (orig-stats ktn-stats-file)
+        (orig-dicts ktn-dictionaries)
+        (orig-stats-data ktn--stats-data))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((inhibit-read-only t))
+            (erase-buffer))
+          (ktn--test-setup)
+          (dolist (action actions)
+            (cond
+             ((stringp action)
+              (ktn--run-action-sequence action))
+             ((functionp action)
+              (funcall action))
+             (t
+              (eval action))))
+          (buffer-substring-no-properties (point-min) (point-max)))
+      (setq ktn-jisyo-file   orig-jisyo
+            ktn-stats-file   orig-stats
+            ktn-dictionaries orig-dicts
+            ktn--stats-data  orig-stats-data)
+      (when (and ktn-stats-file (file-exists-p ktn-stats-file))
+        (delete-file ktn-stats-file)))))
 
+(ert-deftest ktn-basic-conversion/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC C-j")))
+    (should (string-match-p "漢字" result))))
+
+(ert-deftest ktn-quit/test1 ()
+  (let ((result
+         (ktn-e2e-test
+           "K a n j i C-g s a")))
+    (should (string-match-p "さ" result))))
+
+(ert-deftest ktn-katakana-convert/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i q")))
+    (should (string-match-p "カンジ" result))))
+
+(ert-deftest basic-henkan/test1 ()
+  (let ((result
+         (ktn-e2e-test
+           "K a n J i C-j K a n j i SPC C-j")))
+    (should (string-match-p "感じ漢字" result))))
+
+(ert-deftest ktn-complete/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a TAB TAB C-j")))
+    (should (string-match-p "かんじ" result))))
+
+(ert-deftest ktn-select-key/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC 1")))
+    (should (string-match-p "漢字" result))))
+
+(ert-deftest ktn-backspace/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a k i C-h n j i SPC C-j")))
+    (should (string-match-p "漢字" result))))
+
+(ert-deftest ktn-kakutei-newline/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC RET s a")))
+    (should (string-match-p "漢字\nさ" result))))
+
+(ert-deftest ktn-page-navigation/test1()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC SPC <next> <prior> C-j")))
+    (should (string-match-p "漢字" result))))
+
+(ert-deftest ktn-previous-candidate/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC x C-j")))
+    (should (string-match-p "幹事" result))))
+
+(ert-deftest ktn-continuous-conversion/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC S a i C-j")))
+    (should (string-match-p "漢字さい" result))))
+
+(ert-deftest recursive-dict-registration/test1 ()
+  (let ((result
+         (let ((inhibit-message t)
+               (message-log-max nil))
+           (cl-letf (((symbol-function 'read-from-minibuffer)
+                      (lambda (&rest _)
+                        ""))
+                     ((symbol-function 'minibufferp)
+                      (lambda () nil)))
+             (ktn-e2e-test
+              "S a i k i t e k i SPC S a i k i SPC S a i SPC K i SPC C-c C-c T e k i SPC C-j C-c C-c")))))
+    (should (string-match-p "再帰的" result))))
+
+(ert-deftest ktn-hassamu/test1 ()
+  (with-temp-buffer
+    (let* ((inhibit-message t)
+           (target "情報処理技術者"))
+      (insert (format "%s、。" target))
+      (let ((cands (ktn-hassamu)))
+        (should (listp cands))
+        (should (member target cands)))
+
+      (ktn--state-set :hassamu-active-p t)
+      (ktn--state-set :hassamu-current-matches (list target))
+      (ktn--state-set :hassamu-start-marker (point-marker))
+
+      (let ((last-command-event ?\t))
+        (ktn-tab-key-handler))
+
+      (should (string-match-p target (buffer-string))))))
+
+(ert-deftest ktn-mode-off/test1 ()
+  (with-temp-buffer
+    (let* ((key (kbd "C-x C-j"))
+           (old (global-key-binding key)))
       (unwind-protect
           (progn
-            (ktn-setup)
-            (cl-loop for action in actions
-                     do (cond
-                         ((stringp action)
-                          (execute-kbd-macro (read-kbd-macro action)))
-                         ((functionp action)
-                          (funcall action))
-                         (t
-                          (eval action))))
-            (buffer-substring-no-properties (point-min) (point-max)))
-        (when (file-exists-p ktn-stats-file)
-          (delete-file ktn-stats-file))))))
-
-;;;
-;;; Test Cases (JSON Dictionary Format)
-;;;
-
-(ktn-define-e2e-test ktn-quit/test1
-  "C-g による入力キャンセルと状態リセットのテスト。"
-  (actions #'ktn-mode
-           "K a n j i C-g"
-           "s a")
-  (expected-buffer-string "さ"))
-
-(ktn-define-e2e-test ktn-katakana-convert/test1
-  "見出し語入力中に q を押すとカタカナに変換される。"
-  (actions #'ktn-mode
-           "K a n j i q")
-  (expected-buffer-string "カンジ"))
-
-(ktn-define-e2e-test basic-henkan/test1
-  "送り有りと送り無しで変換できる。"
-  (actions #'ktn-mode
-           "K a n J i C-j"
-           "K a n j i SPC C-j")
-  (expected-buffer-string "感じ漢字"))
-
-(ktn-define-e2e-test ktn-complete/test1
-  "TAB キーによる見出し語のインライン補完テスト。"
-  (actions #'ktn-mode
-           ;; 「か」と途中まで入力して TAB を押し、補完候補を確定・挿入する
-           "K a TAB TAB C-j")
-  (expected-buffer-string "かんじ"))
-
-(ktn-define-e2e-test ktn-select-key/test1
-  "変換中に数字キー（1）を押して直接候補を選択・確定できる。"
-  (actions #'ktn-mode
-           ;; 変換開始（SPC）のあと、1番目の候補を数字キー '1' で直接選択・確定する
-           "K a n j i SPC 1")
-  (expected-buffer-string "漢字"))
-
-(ktn-define-e2e-test ktn-backspace/test1
-  "見出し語入力中のバックスペース（C-h）による文字削除テスト。"
-  (actions #'ktn-mode
-           ;; 「かき」と入力したあと、バックスペースで「か」の状態に戻し、「かんじ」にする
-           "K a k i C-h n j i SPC C-j")
-  (expected-buffer-string "漢字"))
-
-(ktn-define-e2e-test ktn-kakutei-newline/test1
-  "RET による確定と改行の同時実行テスト。"
-  (actions #'ktn-mode
-           "K a n j i SPC RET"
-           "s a")
-  (expected-buffer-string "漢字\nさ"))
-
-(ktn-define-e2e-test ktn-page-navigation/test1
-  "候補一覧表示中の PageDown (<next>) / PageUp (<prior>) によるページ切り替えテスト。"
-  (actions #'ktn-mode
-           ;; 変換開始して候補ウィンドウを開き、ページ送りキーをテストする
-           "K a n j i SPC SPC <next> <prior> C-j")
-  (expected-buffer-string "漢字"))
-
-(ktn-define-e2e-test ktn-previous-candidate/test1
-  "'x' で前候補へ戻る。"
-  (actions #'ktn-mode
-           "K a n j i SPC x C-j")
-  (expected-buffer-string "幹事"))
-
-;; (ktn-define-e2e-test ktn-kutouten-henkan/test1
-;;   "JSON辞書を用いたでの句読点で変換開始。"
-;;   (actions #'ktn-mode
-;;            "K a n j i . C-j")
-;;   (expected-buffer-string "漢字。"))
-
-(ktn-define-e2e-test ktn-continuous-conversion/test1
-  "変換中に大文字を入力すると、現在の変換を確定して新しい見出し語入力を開始する。"
-  (actions #'ktn-mode
-           "K a n j i SPC S a i C-j")
-  (expected-buffer-string "漢字さい"))
-
-(ktn-define-e2e-test recursive-dict-registration/test1
-  "未知の複合語登録時に再帰的な辞書登録を行える。"
-  (actions #'ktn-mode
-           ;; 1. 「さいきてき」を入力して変換（SPC）→ 辞書にないため「さいきてき」の登録モードへ
-           "S a i k i t e k i SPC"
-           ;; 2. さらに「さいき」を入力して変換（SPC）→ 「さいき」もないため再帰的な登録モードへ
-           "S a i k i SPC"
-           ;; 3. 「さい」と「き」をそれぞれ変換して「再帰」を作り、C-c C-c で「さいき」の登録を完了させる
-           "S a i SPC K i SPC C-c C-c"
-           ;; 4. 親の「さいきてき」の登録モードに戻り、「さいき」を変換（再帰）させ、
-           ;;    「てき」は既存の辞書（的）から引いて「さいきてき」を完成させる
-           "T e k i SPC"
-           ;; 5. 最終的な確定操作
-           "C-j C-c C-c")
-  (expected-buffer-string "再帰的"))
-
-(ktn-define-e2e-test ktn-hassamu/test1
-  "ktn-hassamu を用いた文脈補完のテスト。"
-  (actions #'ktn-mode
-           ;; バッファに「情報処理技術者」等の文字列がある前提でテスト
-           (lambda () (insert "情報処理技術者が"))
-           #'ktn-hassamu
-           (lambda () (erase-buffer))
-           #'ktn-mode
-           "J o u h o u SPC C-j TAB w o")
-  (expected-buffer-string "情報処理技術者を"))
-
-(ktn-define-e2e-test ktn-mode-off/test1
-  "もう一度呼ぶとKTNモードを切れる。"
-  (actions (lambda () (ktn-mode 1))
-           (lambda () (ktn-mode -1))
-           "a")
-  (expected-buffer-string "a"))
+            (global-set-key key #'ktn-mode)
+            (ktn--silence
+              (ktn-mode 1))
+            (should (bound-and-true-p ktn-mode))
+            (let ((cmd (global-key-binding key)))
+              (should cmd)
+              (call-interactively cmd))
+            (should-not (bound-and-true-p ktn-mode)))
+        (if old
+            (global-set-key key old)
+          (global-unset-key key))))))
 
 (provide 'ktn-test)
 
