@@ -93,7 +93,7 @@
   "TAB キーによる見出し語のインライン補完テスト。"
   (actions #'ktn-mode
            ;; 「か」と途中まで入力して TAB を押し、補完候補を確定・挿入する
-           "K a TAB C-j")
+           "K a TAB TAB C-j")
   (expected-buffer-string "かんじ"))
 
 (ktn-define-e2e-test ktn-select-key/test1
