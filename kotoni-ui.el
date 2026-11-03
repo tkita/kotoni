@@ -334,8 +334,8 @@
       (ktn--show-candidates-window))))
 
 (defun ktn-katakana-convert-or-insert ()
+  "Convert current headword to Katakana if in headword mode, otherwise insert `q'."
   (interactive)
-  "Convert current headword to Katakana if in headword mode, otherwise insert 'q'."
   (if (not (ktn--mode-p 'headword))
       (insert "q")
     ;; 1. 残っているローマ字バッファを見出し語バッファへ結合
@@ -467,7 +467,7 @@
      (t
       (ktn--cleanup-headword))))
    (t
-    (backward-delete-char 1))))
+    (delete-char -1))))
 
 ;; | 現在の状態              | 入力 / イベント    | 次の状態       | アクション / 備考                  |
 ;; |-------------------------|--------------------|----------------|------------------------------------|
