@@ -18,15 +18,6 @@
 (defvar-local ktn--hassamu-candidates nil
   "ktn-hassamu で抽出・保持している漢字文字列のリスト（バッファローカル）。")
 
-(defvar-local ktn--hassamu-current-matches nil
-  "現在前方一致で絞り込まれている候補のリスト。")
-
-(defvar-local ktn--hassamu-active-p nil
-  "現在 ktn-hassamu の補完セッション中かどうかを示すフラグ。")
-
-(defvar-local ktn--hassamu-start-marker nil
-  "ktn-hassamu のプレビューが始まったバッファ位置を指すマーカー。")
-
 ;;;###autoload
 (defun ktn-hassamu ()
   "カレントバッファ全体 (point-min から point-max) から漢字文字列を抽出し、バッファローカルなリストに保持する。
@@ -48,12 +39,11 @@
               (when match-str
                 (push match-str candidates)))))))
 
-    (setq ktn--hassamu-candidates (delete-dups (nreverse candidates))
-          ktn--hassamu-active-p nil
-          ktn--hassamu-current-matches nil)
-    (when (markerp ktn--hassamu-start-marker)
-      (set-marker ktn--hassamu-start-marker nil))
-    (message "ktn-hassamu: %d件の漢字文字列を記憶しました。" (length ktn--hassamu-candidates))))
+    (setq ktn--hassamu-candidates (delete-dups (nreverse candidates)))
+    (when (called-interactively-p 'interactive)
+      (message "ktn-hassamu: %d 件の漢字文字列を記憶しました。"
+               (length ktn--hassamu-candidates)))
+    ktn--hassamu-candidates))
 
 (defun ktn--hassamu-accept-current ()
   "ktn-hassamu の現在プレビューされている候補を確定してバッファに挿入し、セッションを終了する。"
