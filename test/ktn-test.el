@@ -123,13 +123,19 @@
           "K a k i C-h n j i SPC C-j")))
     (should (string-match-p "漢字" result))))
 
+(ert-deftest ktn-backspace/test2 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC C-h q")))
+    (should (string-match-p "カンジ" result))))
+
 (ert-deftest ktn-kakutei-newline/test1 ()
   (let ((result
          (ktn-e2e-test
           "K a n j i SPC RET s a")))
     (should (string-match-p "漢字\nさ" result))))
 
-(ert-deftest ktn-page-navigation/test1()
+(ert-deftest ktn-page-navigation/test1 ()
   (let ((result
          (ktn-e2e-test
           "K a n j i SPC SPC <next> <prior> C-j")))
