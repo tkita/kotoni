@@ -1,7 +1,7 @@
 ;;; kotoni-hassamu.el --- hassamu support for Kotoni -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
-;; Version: 0.1
+;; Version: 0.2
 ;; Author: Tsuyoshi Kitamoto <tsuyohi.kitamoto@gmail.com>
 ;; License: GPL-3.0-or-later
 ;; Package-Requires: ((emacs "30.1") (cl-lib "0.5") (json))
@@ -10,10 +10,12 @@
 ;; 1. 対象の文書ファイルを開き、`M-x ktn-hassamu` を実行して、バッファ内の漢字をスキャン・記憶させます。
 ;;    なお、この管理はバッファローカルですので、文書ファイルを閉じれば破棄されます。
 ;; 2. 変換時に、バッファ内の文脈に応じた語句候補がインラインおよび候補ウィンドウに提示されます。
+;;    (ktn-headword オブジェクトの hassamu フィールド群を使用)
 
 ;;; Code:
 
 (require 'cl-lib)
+(require 'kotoni-fsm)
 
 (defvar-local ktn--hassamu-candidates nil
   "ktn-hassamu で抽出・保持している漢字文字列のリスト（バッファローカル）。")
@@ -33,7 +35,6 @@
           (insert clean-content)
           (goto-char (point-min))
           ;; 漢字3文字以上で始まり、その直後に「漢字以外の文字」が来るまでの文字列を抽出する
-          ;; 構造: 漢字3文字以上の連続 ＋ (漢字以外の文字 または 文末)
           (while (re-search-forward "\\([一-龥]\\{3,\\}\\)[^一-龥]" nil t)
             (let ((match-str (match-string 1)))
               (when match-str
@@ -47,45 +48,48 @@
 
 (defun ktn--hassamu-accept-current ()
   "ktn-hassamu の現在プレビューされている候補を確定してバッファに挿入し、セッションを終了する。"
-  (let* ((target         (car (ktn--state-get :hassamu-current-matches)))
-         (start-marker   (ktn--state-get :hassamu-start-marker))
-         (confirmed-text (ktn--state-get :hassamu-confirmed-text)))
-    (when target
-      (when (markerp start-marker)
-        (goto-char (marker-position start-marker)))
+  (when ktn--current-headword
+    (let* ((hw             ktn--current-headword)
+           (target         (car (ktn-headword-hassamu-current-matches hw)))
+           (start-marker   (ktn-headword-hassamu-start-marker hw))
+           (confirmed-text (ktn-headword-confirmed-text hw)))
+      (when target
+        (when (markerp start-marker)
+          (goto-char (marker-position start-marker)))
 
-      (let ((diff (if (and confirmed-text
-                           (string-prefix-p confirmed-text target))
-                      (substring target (length confirmed-text))
-                    target)))
-      (insert diff))))
+        (let ((diff (if (and confirmed-text
+                             (string-prefix-p confirmed-text target))
+                        (substring target (length confirmed-text))
+                      target)))
+          (insert diff)))))
 
   (ktn--hassamu-abort))
 
 (defun ktn--hassamu-update-display ()
   "ktn-hassamu のアクティブ時に、最初の候補をインラインプレビューとして表示する。"
-  ;; 既存のオーバーレイがあれば削除
-  (when (overlayp (ktn--state-get :headword-overlay))
-    (delete-overlay (ktn--state-get :headword-overlay))
-    (ktn--state-set :headword-overlay nil))
+  (when ktn--current-headword
+    (let ((hw ktn--current-headword))
+      ;; 既存のオーバーレイがあれば削除
+      (when (overlayp (ktn-headword-headword-overlay hw))
+        (delete-overlay (ktn-headword-headword-overlay hw))
+        (setf (ktn-headword-headword-overlay hw) nil))
 
-  ;; ktn--state からアクティブ状態とマッチ候補を取得して判定
-  (when (and (ktn--state-get :hassamu-active-p)
-             (ktn--state-get :hassamu-current-matches))
-    (let* ((target (car (ktn--state-get :hassamu-current-matches)))
-           ;; 表示位置は hassamu-start-marker があればそこを基準に、なければ現在地
-           (pos (or (and (markerp (ktn--state-get :hassamu-start-marker))
-                         (marker-position (ktn--state-get :hassamu-start-marker)))
-                    (point))))
+      ;; アクティブ状態とマッチ候補を取得して判定
+      (when (and (ktn-headword-hassamu-active-p hw)
+                 (ktn-headword-hassamu-current-matches hw))
+        (let* ((target (car (ktn-headword-hassamu-current-matches hw)))
+               (pos (or (and (markerp (ktn-headword-hassamu-start-marker hw))
+                             (marker-position (ktn-headword-hassamu-start-marker hw)))
+                        (point))))
 
-      (ktn--state-set :headword-overlay (make-overlay pos pos nil t t))
+          (setf (ktn-headword-headword-overlay hw) (make-overlay pos pos nil t t))
 
-      (move-overlay (ktn--state-get :headword-overlay) pos pos)
-      (overlay-put  (ktn--state-get :headword-overlay) 'before-string nil)
+          (move-overlay (ktn-headword-headword-overlay hw) pos pos)
+          (overlay-put  (ktn-headword-headword-overlay hw) 'before-string nil)
 
-      (overlay-put  (ktn--state-get :headword-overlay) 'after-string
-                    (propertize (concat "→ " target)
-                                'face 'ktn-completion-preview-face)))))
+          (overlay-put  (ktn-headword-headword-overlay hw) 'after-string
+                        (propertize (concat "→ " target)
+                                    'face 'ktn-completion-preview-face)))))))
 
 (defun ktn--hassamu-on-kakutei (confirmed-text)
   "確定文字列 CONFIRMED-TEXT をキーにリストを前方一致検索し、マッチすればセッションを開始する。"
@@ -97,26 +101,28 @@
       (if (not matches)
           (ktn--hassamu-abort)
         (progn
-          (ktn--state-set :hassamu-active-p t)
-          (ktn--state-set :hassamu-current-matches matches)
-          (ktn--state-set :hassamu-confirmed-text confirmed-text)
-          (ktn--state-set :hassamu-start-marker
-                          (set-marker (or (ktn--state-get :hassamu-start-marker) (make-marker))
-                                      ;; (- (point) (length confirmed-text))
-                                      (point)
-                                      ))
-          (ktn--hassamu-update-display))))))
+          (when ktn--current-headword
+            (let ((hw ktn--current-headword))
+              (setf (ktn-headword-hassamu-active-p hw) t
+                    (ktn-headword-hassamu-current-matches hw) matches
+                    (ktn-headword-confirmed-text hw) confirmed-text
+                    (ktn-headword-hassamu-start-marker hw)
+                    (set-marker (or (ktn-headword-hassamu-start-marker hw) (make-marker))
+                                (point)))
+              (ktn--hassamu-update-display))))))))
 
 (defun ktn--hassamu-abort ()
   "ktn-hassamu のセッションを強制終了し、プレビューとマーカーを片付ける。"
-  (ktn--state-set :hassamu-active-p        nil)
-  (ktn--state-set :hassamu-current-matches nil)
-  (ktn--state-set :confirmed-text          nil)
-  (let ((old-marker (ktn--state-get :hassamu-start-marker)))
-    (when (markerp old-marker)
-      (set-marker old-marker nil))
-    (ktn--state-set :hassamu-start-marker nil))
-  (ktn--hassamu-update-display))
+  (when ktn--current-headword
+    (let ((hw ktn--current-headword))
+      (setf (ktn-headword-hassamu-active-p hw)        nil
+            (ktn-headword-hassamu-current-matches hw) nil
+            (ktn-headword-confirmed-text hw)          nil)
+      (let ((old-marker (ktn-headword-hassamu-start-marker hw)))
+        (when (markerp old-marker)
+          (set-marker old-marker nil))
+        (setf (ktn-headword-hassamu-start-marker hw) nil))
+      (ktn--hassamu-update-display))))
 
 (provide 'kotoni-hassamu)
 ;;; kotoni-hassamu.el ends here

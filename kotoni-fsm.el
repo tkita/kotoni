@@ -6,72 +6,70 @@
 ;; License: GPL-3.0-or-later
 
 ;;; Commentary:
-;; 第2階層：有限ステートマシンの状態管理（normal / headword / converting）とロジック計算を担当するモジュール。
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'kotoni-data)
 
-;;; FSM 内部ステート変数とアクセサ
-(defvar-local ktn--state nil)
+;;; データオブジェクト定義
 
-(defun ktn--state-get (key &optional default)
-  (let ((val (plist-get ktn--state key)))
-    (cond
-     (val val)
-     (default default)
-     ((memq key '(:headword-buffer
-                  :roma-buffer
-                  :okuri-buffer
-                  :okuri-roma-buffer
-                  :okuri-roma-first
-                  :completion-base))
-      "")
-     (t nil))))
+(defvar-local ktn--normal-roma-buffer ""
+  "通常モード時の一時ローマ字バッファ")
 
-(defun ktn--state-set (key value)
-  (setq ktn--state (plist-put ktn--state key value))
-  value)
+(cl-defstruct (ktn-headword (:constructor ktn-headword--create))
+  "見出し語入力・変換状態を保持するデータオブジェクト"
+  (mode                  'headword)     ; 'headword | 'converting
+  (buffer                "")            ; 見出し語テキスト
+  (roma-buffer           "")            ; 入力中ローマ字
+  (okuri-buffer          "")            ; 送り仮名テキスト
+  (okuri-roma-buffer     "")            ; 送り仮名入力中ローマ字
+  (okuri-roma-first      "")            ; 送り開始大文字
+  (start-marker          nil)           ; 開始位置マーカー
+  (candidates            nil)           ; 変換候補リスト
+  (candidate-index       0)             ; 選択中インデックス
+  (henkan-count          0)             ; 変換打鍵回数
+  (completion-cands      nil)           ; 補完候補
+  (completion-index      0)             ; 補完インデックス
+  (completion-base       nil)           ; 補完基準テキスト
+  (completion-tab-count  0)             ; TAB連打カウント
+  (headword-overlay      nil)           ; オーバーレイ参照
+  
+  ;; hassamu 連携用フィールド
+  (hassamu-active-p        nil)
+  (hassamu-current-matches nil)
+  (confirmed-text          nil)
+  (hassamu-start-marker    nil))
+
+(defvar-local ktn--current-headword nil
+  "現在アクティブな `ktn-headword` オブジェクトインスタンス。")
 
 (defun ktn--mode-p (mode)
-  (eq (ktn--state-get :mode) mode))
+  (and ktn--current-headword
+       (eq (ktn-headword-mode ktn--current-headword) mode)))
 
 (defun ktn--state-reset ()
-  (setq ktn--state
-        (list :mode                  nil
-              :headword-buffer       ""
-              :roma-buffer           ""
-              :okuri-buffer          ""
-              :okuri-roma-buffer     ""
-              :okuri-roma-first      ""
-              :headword-start-marker nil
-              :candidates            nil
-              :candidate-index       0
-              :henkan-count          0
-              :completion-cands      nil
-              :completion-index      0
-              :completion-base       nil
-              :completion-tab-count  0
-              :headword-overlay      nil
+  (setq ktn--current-headword nil)
+  (setq ktn--normal-roma-buffer ""))
 
-              :hassamu-active-p        nil
-              :hassamu-current-matches nil
-              :confirmed-text          nil
-              :hassamu-start-marker    nil
-              )))
+;;; ヘルパー関数
 
-;;; ユーティリティ変換処理
-(defun ktn--hiragana-to-katakana (str)
-  (let ((rules '(("う゛" . "ヴ") ("ゔ" . "ヴ") ("ゝ" . "ヽ") ("ゞ" . "ヾ"))))
-    (dolist (rule rules)
-      (setq str (replace-regexp-in-string (car rule) (cdr rule) str)))
-    (apply #'concat
-           (mapcar (lambda (c)
-                     (if (and (>= c ?ぁ) (<= c ?ん))
-                         (char-to-string (+ c (- ?ァ ?ぁ)))
-                       (char-to-string c)))
-                   str))))
+(defun ktn--to-char-int (ch)
+  "入力文字 CH を安全に整数文字コードに変換する。"
+  (cond
+   ((integerp   ch) ch)
+   ((characterp ch) ch)
+   ((stringp    ch) (string-to-char ch))
+   (t 0)))
+
+(defun ktn--upper-case-p (ch-int)
+  (and (<= ?A ch-int) (<= ch-int ?Z)))
+
+(defun ktn--lower-case-p (ch-int)
+  (and (<= ?a ch-int) (<= ch-int ?z)))
+
+(defun ktn--number-key-p (ch-int)
+  (and (<= ?1 ch-int) (<= ch-int ?9)))
 
 (defun ktn--safe-char-to-string (ch)
   (cond
@@ -81,186 +79,188 @@
    (t "")))
 
 (defun ktn--roma-prefix-p (prefix)
-  (cl-some (lambda (pair) (string-prefix-p prefix (car pair)))
+  (cl-some (lambda (pair)
+             (string-prefix-p prefix (car pair)))
            ktn-roma-table))
 
-(defun ktn--process-roma-input (char-str)
-  (let* ((old-roma (ktn--state-get :roma-buffer))
-         (safe-char-str (ktn--safe-char-to-string char-str))
-         (new-roma (concat old-roma safe-char-str))
-         (kana (cdr (assoc new-roma ktn-roma-table))))
+(defun ktn--process-roma-input (old-roma char-str)
+  "OLD-ROMA と入力文字 CHAR-STR からローマ字・かな変換を計算する。"
+  (let* ((new-roma (concat old-roma char-str))
+         (kana     (cdr (assoc new-roma ktn-roma-table))))
     (cond
-     (kana (cons kana ""))
+     (kana
+      (cons kana ""))
+
      ((and (string= old-roma "n")
-           (not (member safe-char-str '("a" "i" "u" "e" "o" "y" "n"))))
-      (let ((next-kana (cdr (assoc safe-char-str ktn-roma-table))))
-        (cons (concat "ん" (or next-kana "")) (if next-kana "" safe-char-str))))
+           (not (member char-str '("a" "i" "u" "e" "o" "y" "n"))))
+      (let ((next-kana (cdr (assoc char-str ktn-roma-table))))
+        (cons (concat "ん" (or next-kana "")) (if next-kana "" char-str))))
+
      ((and (= (length old-roma) 1)
-           (string= old-roma safe-char-str)
-           (string-match-p "^[b-df-hj-np-tv-z]$" safe-char-str))
-      (cons "っ" safe-char-str))
+           (string= old-roma char-str)
+           (string-match-p "^[b-df-hj-np-tv-z]$" char-str))
+      (cons "っ" char-str))
+
      ((ktn--roma-prefix-p new-roma)
       (cons "" new-roma))
+
      (t
       (if (string-empty-p old-roma)
-          (cons safe-char-str "")
-        (cons old-roma safe-char-str))))))
+          (cons char-str "")
+        (cons old-roma char-str))))))
 
-(defun ktn--reset-completion ()
-  (ktn--state-set :completion-base nil)
-  (ktn--state-set :completion-tab-count 0)
-  (ktn--state-set :completion-index 0)
-  (ktn--state-set :completion-cands nil))
+(defun ktn--reset-completion (hw)
+  (setf (ktn-headword-completion-base      hw) nil
+        (ktn-headword-completion-tab-count hw) 0
+        (ktn-headword-completion-index     hw) 0
+        (ktn-headword-completion-cands     hw) nil))
 
-
-;;; モード別入力ディスパッチロジック (FSM Core)
+;;; 各モードの入力ハンドラ
 
 (defun ktn--handle-normal-mode (ch)
-  (let* ((is-upper (and (characterp ch) (<= ?A ch) (<= ch ?Z)))
-         (lower-ch (if is-upper (+ ch 32) ch))
-         (is-alpha (and (characterp lower-ch) (<= ?a lower-ch) (<= lower-ch ?z))))
+  "通常モード時の入力処理"
+  (let* ((ch-int   (ktn--to-char-int ch))
+         (is-upper (ktn--upper-case-p ch-int))
+         (lower-ch (if is-upper (+ ch-int 32) ch-int))
+         (is-alpha (ktn--lower-case-p lower-ch)))
     (cond
-     ;; 大文字入力 -> ▽見出し語モードへ遷移
+     ;; 大文字入力: 見出し語モード（▽）へ遷移
      (is-upper
-      (unless (string-empty-p (ktn--state-get :roma-buffer))
-        (insert (ktn--state-get :roma-buffer))
-        (ktn--state-set :roma-buffer ""))
-      (ktn--state-reset)
-      (ktn--state-set :mode 'headword)
-      (ktn--state-set :headword-start-marker (point-marker))
+      (setq ktn--normal-roma-buffer "")
+      (ktn--start-headword-mode)
       (let* ((char-str (ktn--safe-char-to-string lower-ch))
-             (res (ktn--process-roma-input char-str)))
-        (ktn--state-set :headword-buffer (car res))
-        (ktn--state-set :roma-buffer (cdr res))))
+             (res      (ktn--process-roma-input "" char-str)))
+        (setf (ktn-headword-buffer ktn--current-headword) (car res)
+              (ktn-headword-roma-buffer ktn--current-headword) (cdr res))))
 
-      ;; 通常の文字入力
+     ;; 通常の文字入力
      (t
-      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch)))
-             (res (ktn--process-roma-input char-str)))
+      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
+             (res      (ktn--process-roma-input ktn--normal-roma-buffer char-str)))
+        (setq ktn--normal-roma-buffer (cdr res))
         (unless (string-empty-p (car res))
-          (insert (car res)))
-        (ktn--state-set :roma-buffer (cdr res)))))))
+          (insert (car res))))))))
 
 (defun ktn--handle-headword-mode (ch &optional start-henkan-fn)
-  "見出し語入力モード（headword）中のキー入力 CH を処理する。"
-  (let* ((ch-int (cond
-                  ((integerp ch) ch)
-                  ((characterp ch) ch)
-                  ((stringp ch) (string-to-char ch))
-                  (t 0)))
-         (is-upper (and (<= ?A ch-int) (<= ch-int ?Z)))
+  "▽時の入力処理"
+  (unless ktn--current-headword
+    (ktn--start-headword-mode))
+  
+  (let* ((hw       ktn--current-headword)
+         (ch-int   (ktn--to-char-int ch))
+         (is-upper (ktn--upper-case-p ch-int))
          (lower-ch (if is-upper (+ ch-int 32) ch-int))
-         (is-alpha (and (<= ?a lower-ch) (<= lower-ch ?z))))
-    
-    (ktn--reset-completion)
+         (is-alpha (ktn--lower-case-p lower-ch)))
+
+    (ktn--reset-completion hw)
 
     (if is-upper
-        ;; --- 大文字入力（送り仮名の入力開始トリガー） ---
+        ;; 送り仮名入力の開始
         (progn
-          ;; 1. 残っているローマ字バッファを見出し語バッファへ結合
-          (unless (string-empty-p (ktn--state-get :roma-buffer))
-            (ktn--state-set :headword-buffer (concat (ktn--state-get :headword-buffer) (ktn--state-get :roma-buffer)))
-            (ktn--state-set :roma-buffer ""))
-          ;; 2. 末尾の "n" を「ん」に確実な変換
-          (when (string-suffix-p "n" (ktn--state-get :headword-buffer))
-            (ktn--state-set :headword-buffer (concat (substring (ktn--state-get :headword-buffer) 0 -1) "ん")))
+          (unless (string-empty-p (ktn-headword-roma-buffer hw))
+            (setf (ktn-headword-buffer hw)
+                  (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
+                  (ktn-headword-roma-buffer hw) ""))
 
-          ;; 3. 送り仮名側の初期設定（必ず安全な文字列に変換）
+          (when (string-suffix-p "n" (ktn-headword-buffer hw))
+            (setf (ktn-headword-buffer hw)
+                  (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+
           (let ((char-str (ktn--safe-char-to-string lower-ch)))
-            (ktn--state-set :okuri-roma-first char-str)
-            (ktn--state-set :okuri-roma-buffer char-str)
-            (ktn--state-set :okuri-buffer "")
-            (let ((res (ktn--process-roma-input char-str)))
+            (setf (ktn-headword-okuri-roma-first hw) char-str
+                  (ktn-headword-okuri-roma-buffer hw) char-str
+                  (ktn-headword-okuri-buffer hw) "")
+            (let ((res (ktn--process-roma-input "" char-str)))
               (unless (string-empty-p (car res))
-                (ktn--state-set :okuri-buffer (car res))
-                (ktn--state-set :okuri-roma-buffer (cdr res))
+                (setf (ktn-headword-okuri-buffer hw) (car res)
+                      (ktn-headword-okuri-roma-buffer hw) (cdr res))
                 (when start-henkan-fn
                   (funcall start-henkan-fn))))))
 
-      ;; --- 小文字入力（通常の見出し語または送りローマ字の継続） ---
-      (if (string-empty-p (ktn--state-get :okuri-roma-first))
-          ;; 見出し語の継続入力
+      ;; 通常の見出し語または送り文字の継続
+      (if (string-empty-p (ktn-headword-okuri-roma-first hw))
           (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-                 (res (ktn--process-roma-input char-str)))
-            (ktn--state-set :headword-buffer (concat (ktn--state-get :headword-buffer) (car res)))
-            (ktn--state-set :roma-buffer (cdr res)))
+                 (res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
+            (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (car res))
+                  (ktn-headword-roma-buffer hw) (cdr res)))
 
-        ;; 送りローマ字の継続入力
         (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-               (saved-roma (ktn--state-get :roma-buffer)))
-          (ktn--state-set :roma-buffer (ktn--state-get :okuri-roma-buffer))
-          (let ((res (ktn--process-roma-input char-str)))
-            (ktn--state-set :okuri-buffer (concat (ktn--state-get :okuri-buffer) (car res)))
-            (ktn--state-set :okuri-roma-buffer (cdr res))
-            (ktn--state-set :roma-buffer saved-roma)
-            (unless (string-empty-p (ktn--state-get :okuri-buffer))
+               (saved-roma (ktn-headword-roma-buffer hw)))
+          (setf (ktn-headword-roma-buffer hw) (ktn-headword-okuri-roma-buffer hw))
+          (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
+            (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (car res))
+                  (ktn-headword-okuri-roma-buffer hw) (cdr res)
+                  (ktn-headword-roma-buffer hw) saved-roma)
+            (unless (string-empty-p (ktn-headword-okuri-buffer hw))
               (when start-henkan-fn
                 (funcall start-henkan-fn)))))))))
 
+(defun ktn--handle-converting-mode (ch)
+  "▼時の入力処理。"
+  (when ktn--current-headword
+    (let* ((hw        ktn--current-headword)
+           (ch-int    (ktn--to-char-int ch))
+           (is-upper  (ktn--upper-case-p ch-int))
+           (lower-ch  (if is-upper (+ ch-int 32) ch-int))
+           (is-alpha  (ktn--lower-case-p lower-ch))
+           (is-number (ktn--number-key-p ch-int)))
+
+      (cond
+       ;; 大文字: 現在の変換を確定し、新たな Headword を開始
+       (is-upper
+        (ktn-kakutei)
+        (ktn--start-headword-mode)
+        (let* ((char-str (ktn--safe-char-to-string lower-ch))
+               (res (ktn--process-roma-input "" char-str)))
+          (setf (ktn-headword-buffer ktn--current-headword) (car res)
+                (ktn-headword-roma-buffer ktn--current-headword) (cdr res))
+          (ktn--update-inline-display)))
+
+       ;; 'x': 前候補選択
+       ((or (= ch-int ?x)
+            (eq ch 'x))
+        (when (fboundp 'ktn-previous-candidate)
+          (ktn-previous-candidate)))
+
+       ;; 数字キー: 該当候補の選択・確定
+       (is-number
+        (let ((index (- ch-int ?1)))
+          (ktn-select-nth-candidate index))
+        (ktn-kakutei))
+
+       ;; 小文字アルファベット: 確定して通常文字として挿入
+       (is-alpha
+        (ktn-kakutei)
+        (let ((last-command-event lower-ch))
+          (ktn--handle-normal-mode last-command-event)))
+
+       (t nil)))))
+
+(defun ktn--hiragana-to-katakana (str)
+  "ひらがな文字列 STR をカタカナに変換する。"
+  (apply #'string
+         (mapcar (lambda (c)
+                   (if (and (>= c #x3041)  ; ?ぁ
+                            (<= c #x309F)) ; ?ゟ ※「より」という2文字を1文字にまとめた合字
+                       (+ c #x60)
+                     c))
+                 str)))
+
+
+;;; ライフサイクル管理関数
+
 (defun ktn--start-headword-mode ()
-  "新しい見出し語入力モード（▽）を開始するための共通初期化処理。"
-  (ktn--state-reset)
-  (ktn--state-set :mode 'headword)
-  (ktn--state-set :headword-start-marker (point-marker)))
+  "新しい `ktn-headword` オブジェクトを生成して初期化する。"
+  (setq ktn--current-headword (ktn-headword--create :mode 'headword
+                                                    :start-marker (point-marker))))
 
 (defun ktn-select-nth-candidate (n)
-  "N番目（0始まり）の変換候補を選択して確定する。"
-  (interactive "p")
-  ;; 1. 候補リストの範囲内かチェック
-  (let* ((candidates (ktn--state-get :candidates))
-         (total (if candidates (length candidates) 0)))
-    (when (and (>= n 0) (< n total))
-      ;; 2. 現在のインデックスを更新、または直接その候補で確定する
-      (ktn--state-set :candidate-index n)
-      (ktn-kakutei))))
-
-(defun ktn--handle-converting-mode (ch)
-  "変換モード（converting）中のキー入力 CH を処理する。"
-  (let* ((ch-int (cond
-                  ((integerp   ch) ch)
-                  ((characterp ch) ch)
-                  ((stringp    ch) (string-to-char ch))
-                  (t 0)))
-         (is-upper  (and (<= ?A ch-int) (<= ch-int ?Z)))
-         (lower-ch  (if is-upper (+ ch-int 32) ch-int))
-         (is-alpha  (and (<= ?a lower-ch) (<= lower-ch ?z)))
-         (is-number (and (<= ?1 ch-int) (<= ch-int ?9))))
-
-    (cond
-     ;; 1. 変換中に大文字が入力された場合：現在の変換を確定し、新しい見出し語モードを開始
-     (is-upper
-      (ktn-kakutei)
-      (ktn--start-headword-mode)
-      (let ((char-str (ktn--safe-char-to-string lower-ch)))
-        (ktn--state-set :roma-buffer char-str)
-        (ktn--update-inline-display)))
-
-     ;; 2. 'x' が入力された場合は前候補選択（ktn-previous-candidate）を実行
-     ((or (= ch-int ?x) (eq ch 'x))
-      (when (fboundp 'ktn-previous-candidate)
-        (ktn-previous-candidate)))
-
-     ;; 3. 数字キー（'1' 〜 '9'）が入力された場合：対応する候補を選択・確定
-     (is-number
-      (let ((index (- ch-int ?1)))
-        (ktn-select-nth-candidate index))
-      (ktn-kakutei))
-
-     ;; 4. 【修正】変換中に小文字アルファベットが入力された場合：
-     ;;    現在の変換を確定し、打たれた文字をそのまま通常入力（normal）として処理する
-     (is-alpha
-      (let ((char-str (ktn--safe-char-to-string lower-ch)))
-        (ktn-kakutei)
-        ;; 確定後の通常モード（normal）でその文字を改めて処理・挿入する
-        (let* ((res (ktn--process-roma-input char-str)))
-          (unless (string-empty-p (car res))
-            (insert (car res)))
-          (ktn--state-set :roma-buffer (cdr res)))))
-
-     ;; 4. その他の変換中操作（必要に応じてスペースや次候補など）
-     (t
-      ;; 必要に応じたデフォルトの変換中キー処理
-      ))))
+  (when ktn--current-headword
+    (let* ((candidates (ktn-headword-candidates ktn--current-headword))
+           (total (if candidates (length candidates) 0)))
+      (when (and (>= n 0) (< n total))
+        (setf (ktn-headword-candidate-index ktn--current-headword) n)
+        (ktn-kakutei)))))
 
 (provide 'kotoni-fsm)
 ;;; kotoni-fsm.el ends here

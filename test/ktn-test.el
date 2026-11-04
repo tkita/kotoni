@@ -175,9 +175,13 @@
         (should (listp cands))
         (should (member target cands)))
 
-      (ktn--state-set :hassamu-active-p t)
-      (ktn--state-set :hassamu-current-matches (list target))
-      (ktn--state-set :hassamu-start-marker (point-marker))
+      ;; グローバルな状態セットではなく、新設計の ktn-headword オブジェクトを直接設定する
+      (setq ktn--current-headword
+            (ktn-headword--create
+             :mode 'headword
+             :hassamu-active-p t
+             :hassamu-current-matches (list target)
+             :hassamu-start-marker (point-marker)))
 
       (let ((last-command-event ?\t))
         (ktn-tab-key-handler))
