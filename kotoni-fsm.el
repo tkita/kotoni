@@ -223,6 +223,7 @@
                   (t 0)))
          (is-upper  (and (<= ?A ch-int) (<= ch-int ?Z)))
          (lower-ch  (if is-upper (+ ch-int 32) ch-int))
+         (is-alpha  (and (<= ?a lower-ch) (<= lower-ch ?z)))
          (is-number (and (<= ?1 ch-int) (<= ch-int ?9))))
 
     (cond
@@ -244,6 +245,17 @@
       (let ((index (- ch-int ?1)))
         (ktn-select-nth-candidate index))
       (ktn-kakutei))
+
+     ;; 4. 【修正】変換中に小文字アルファベットが入力された場合：
+     ;;    現在の変換を確定し、打たれた文字をそのまま通常入力（normal）として処理する
+     (is-alpha
+      (let ((char-str (ktn--safe-char-to-string lower-ch)))
+        (ktn-kakutei)
+        ;; 確定後の通常モード（normal）でその文字を改めて処理・挿入する
+        (let* ((res (ktn--process-roma-input char-str)))
+          (unless (string-empty-p (car res))
+            (insert (car res)))
+          (ktn--state-set :roma-buffer (cdr res)))))
 
      ;; 4. その他の変換中操作（必要に応じてスペースや次候補など）
      (t

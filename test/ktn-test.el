@@ -141,6 +141,12 @@
           "K a n j i SPC x C-j")))
     (should (string-match-p "幹事" result))))
 
+(ert-deftest ktn-continuous/test1 ()
+  (let ((result
+         (ktn-e2e-test
+          "K a n j i SPC s a i C-j")))
+    (should (string-match-p "漢字さい" result))))
+
 (ert-deftest ktn-continuous-conversion/test1 ()
   (let ((result
          (ktn-e2e-test
