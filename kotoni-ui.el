@@ -685,7 +685,7 @@
     (setq ktn-dictionaries (list (make-ktn-dictionary :path ktn-jisyo-file :data nil)))
 
     (dolist (dict ktn-dictionaries)
-      (ktn--ensure-dictionary-loaded dict))
+      (ktn--load-dictionary-data dict))
 
     (unless (memq #'ktn-save-stats kill-emacs-hook)
       (add-hook 'kill-emacs-hook #'ktn-save-stats))

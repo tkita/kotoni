@@ -157,27 +157,47 @@
             (insert (json-encode ktn--stats-data))))
       (error (message "Failed to save ktn stats file: %s" err)))))
 
-(defun ktn--ensure-dictionary-loaded (dict)
-  "DICT のファイルが未読込であれば読み込み、全見出し語リストをキャッシュする。"
-  (let ((file (ktn-dictionary-path dict)))
-    (when (and file (file-exists-p file))
-      (unless (ktn-dictionary-data dict)
-        (let ((data (with-temp-buffer
-                      (insert-file-contents file)
-                      (json-parse-buffer :object-type 'hash-table))))
-          (setf (ktn-dictionary-data dict) data)
-          ;; 【起動時/初回ロード時】に一度だけ全見出し語を収集してリスト化
-          (let (hlist)
-            (when (hash-table-p data)
-              (dolist (section-key '("okuri_nasi" "okuri_ari"))
-                (let ((section (gethash section-key data)))
-                  (when (hash-table-p section)
-                    (maphash (lambda (midasi _)
-                               (push midasi hlist))
-                             section)))))
-            ;; あらかじめソート済みの見出し語リストとして保持しておく
-            (setf (ktn-dictionary-headwords dict) (sort hlist #'string<))))))
-    (ktn-dictionary-headwords dict)))
+;; (defun ktn--ensure-dictionary-loaded (dict)
+;;   "DICT のファイルが未読込であれば読み込み、全見出し語リストをキャッシュする。"
+;;   (let ((file (ktn-dictionary-path dict)))
+;;     (when (and file (file-exists-p file))
+;;       (unless (ktn-dictionary-data dict)
+;;         (let ((data (with-temp-buffer
+;;                       (insert-file-contents file)
+;;                       (json-parse-buffer :object-type 'hash-table))))
+;;           (setf (ktn-dictionary-data dict) data)
+;;           ;; 【起動時/初回ロード時】に一度だけ全見出し語を収集してリスト化
+;;           (let (hlist)
+;;             (when (hash-table-p data)
+;;               (dolist (section-key '("okuri_nasi" "okuri_ari"))
+;;                 (let ((section (gethash section-key data)))
+;;                   (when (hash-table-p section)
+;;                     (maphash (lambda (midasi _)
+;;                                (push midasi hlist))
+;;                              section)))))
+;;             ;; あらかじめソート済みの見出し語リストとして保持しておく
+;;             (setf (ktn-dictionary-headwords dict) (sort hlist #'string<))))))
+;;     (ktn-dictionary-headwords dict)))
+(defun ktn--load-dictionary-data (dict)
+  (let ((path (ktn-dictionary-path dict)))
+    (when (and path (file-exists-p path))
+      (with-temp-buffer
+        (insert-file-contents (ktn-dictionary-path dict))
+        (setf (ktn-dictionary-data dict)
+              (json-parse-buffer :object-type 'hash-table))
+        (setf (ktn-dictionary-headwords dict)
+              (ktn--extract-headwords (ktn-dictionary-data dict)))))))
+
+(defun ktn--extract-headwords (data)
+  (let ((hlist '()))
+    (when (hash-table-p data)
+      (dolist (section-key '("okuri_nasi" "okuri_ari"))
+        (let ((section (gethash section-key data)))
+          (when (hash-table-p section)
+            (maphash (lambda (midasi _)
+                       (push midasi hlist))
+                     section)))))
+    (sort hlist #'string<)))
 
 (defun ktn--parse-candidate-items (items)
   (when (hash-table-p items)
@@ -203,23 +223,15 @@
     (nreverse result)))
 
 (defun ktn-dictionary-search (dict midasi &optional is-okuri)
-  (let ((file (ktn-dictionary-path dict)))
-    (when (and file (file-exists-p file))
-      (let ((data (ktn-dictionary-data dict)))
-        (unless data
-          (with-temp-buffer
-            (insert-file-contents file)
-            (setq data (json-parse-buffer :object-type 'hash-table))
-            (setf (ktn-dictionary-data dict) data)))
-        (when (hash-table-p data)
-          (let* ((section-key (if is-okuri "okuri_ari" "okuri_nasi"))
-                 (section (gethash section-key data))
-                 (raw-cands (cond ((hash-table-p section) (gethash midasi section))
-                                  ((hash-table-p data)    (gethash midasi data))
-                                  (t                       nil))))
-            (when raw-cands
-              (ktn--parse-candidate-items raw-cands)))))
-      )))
+  (let ((data (ktn-dictionary-data dict)))
+    (when (hash-table-p data)
+      (let* ((section-key (if is-okuri "okuri_ari" "okuri_nasi"))
+             (section   (gethash section-key data))
+             (raw-cands (or (and (hash-table-p section)
+                                 (gethash midasi section))
+                            (gethash midasi data))))
+        (when raw-cands
+          (ktn--parse-candidate-items raw-cands))))))
 
 (defun ktn-search-jisyo-combined (midasi &optional is-okuri)
   (let ((seen (make-hash-table :test 'equal))
@@ -281,14 +293,20 @@
     (setq stats-results (sort stats-results #'string<))
 
     ;; 2. システム辞書から検索
+    ;; (dolist (dict ktn-dictionaries)
+    ;;   (let ((headwords (ktn--ensure-dictionary-loaded dict)))
+    ;;     (dolist (midasi headwords)
+    ;;       (when (and (string-prefix-p prefix midasi) (not (gethash midasi seen)))
+    ;;         (puthash midasi t seen)
+    ;;         (push midasi system-results)))))
     (dolist (dict ktn-dictionaries)
-      (let ((headwords (ktn--ensure-dictionary-loaded dict)))
-        (dolist (midasi headwords)
-          (when (and (string-prefix-p prefix midasi) (not (gethash midasi seen)))
-            (puthash midasi t seen)
-            (push midasi system-results)))))
-
+      (dolist (midasi (or (ktn-dictionary-headwords dict) '()))
+        (when (and (string-prefix-p prefix midasi)
+                   (not (gethash midasi seen)))
+          (puthash midasi t seen)
+          (push midasi system-results))))
     (setq system-results (nreverse system-results))
+
     (append stats-results system-results)))
 
 (defun ktn--register-word (midasi word &optional annotation)
