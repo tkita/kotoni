@@ -81,85 +81,36 @@
       (when (and ktn-stats-file (file-exists-p ktn-stats-file))
         (delete-file ktn-stats-file)))))
 
-(ert-deftest ktn-basic-conversion/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC C-j")))
-    (should (string-match-p "漢字" result))))
+(defmacro ktn-define-e2e-tests (&rest tests)
+  "複数のE2Eテストケースを一括定義するマクロ。"
+  `(progn
+     ,@(mapcar (lambda (test)
+                 (let ((name (intern (nth 0 test)))
+                       (input (nth 1 test))
+                       (expected (nth 2 test)))
+                   `(ert-deftest ,name ()
+                      (let ((result (ktn-e2e-test ,input)))
+                        (should (string-match-p ,expected result))))))
+               tests)))
 
-(ert-deftest ktn-quit/test1 ()
-  (let ((result
-         (ktn-e2e-test
-           "K a n j i C-g s a")))
-    (should (string-match-p "さ" result))))
+;; E2E テストケース
+;;   * 名称 "状態（モード）/機能"
+(ktn-define-e2e-tests
+  ("conversion/basic"              "K a n j i SPC C-j"                    "漢字")
+  ("conversion/quit"               "K a n j i C-g s a"                    "さ")
+  ("conversion/katakana"           "K a n j i q"                          "カンジ")
+  ("conversion/sequence"           "K a n J i C-j K a n j i SPC C-j"      "感じ漢字")
+  ("headword/completion"           "K a TAB TAB C-j"                      "かんじ")
+  ("conversion/select-key"         "K a n j i SPC 1"                      "漢字")
+  ("headword/backspace"            "K a k i C-h n j i SPC C-j"            "漢字")
+  ("conversion/backspace-katakana" "K a n j i SPC C-h q"                  "カンジ")
+  ("conversion/kakutei-newline"    "K a n j i SPC RET s a"                "漢字\nさ")
+  ("conversion/page-navigation"    "K a n j i SPC SPC <next> <prior> C-j" "漢字")
+  ("conversion/previous-candidate" "K a n j i SPC x C-j"                  "幹事")
+  ("conversion/continuous1"        "K a n j i SPC s a i C-j"              "漢字さい")
+  ("conversion/continuous2"        "K a n j i SPC S a i C-j"              "漢字さい"))
 
-(ert-deftest ktn-katakana-convert/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i q")))
-    (should (string-match-p "カンジ" result))))
-
-(ert-deftest basic-henkan/test1 ()
-  (let ((result
-         (ktn-e2e-test
-           "K a n J i C-j K a n j i SPC C-j")))
-    (should (string-match-p "感じ漢字" result))))
-
-(ert-deftest ktn-complete/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a TAB TAB C-j")))
-    (should (string-match-p "かんじ" result))))
-
-(ert-deftest ktn-select-key/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC 1")))
-    (should (string-match-p "漢字" result))))
-
-(ert-deftest ktn-backspace/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a k i C-h n j i SPC C-j")))
-    (should (string-match-p "漢字" result))))
-
-(ert-deftest ktn-backspace/test2 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC C-h q")))
-    (should (string-match-p "カンジ" result))))
-
-(ert-deftest ktn-kakutei-newline/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC RET s a")))
-    (should (string-match-p "漢字\nさ" result))))
-
-(ert-deftest ktn-page-navigation/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC SPC <next> <prior> C-j")))
-    (should (string-match-p "漢字" result))))
-
-(ert-deftest ktn-previous-candidate/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC x C-j")))
-    (should (string-match-p "幹事" result))))
-
-(ert-deftest ktn-continuous/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC s a i C-j")))
-    (should (string-match-p "漢字さい" result))))
-
-(ert-deftest ktn-continuous-conversion/test1 ()
-  (let ((result
-         (ktn-e2e-test
-          "K a n j i SPC S a i C-j")))
-    (should (string-match-p "漢字さい" result))))
-
-(ert-deftest recursive-dict-registration/test1 ()
+(ert-deftest dictionary/recursive-registration ()
   (let ((result
          (let ((inhibit-message t)
                (message-log-max nil))
@@ -172,7 +123,7 @@
               "S a i k i t e k i SPC S a i k i SPC S a i SPC K i SPC C-c C-c T e k i SPC C-j C-c C-c")))))
     (should (string-match-p "再帰的" result))))
 
-(ert-deftest ktn-hassamu/test1 ()
+(ert-deftest headword/hassamu ()
   (with-temp-buffer
     (let* ((inhibit-message t)
            (target "情報処理技術者"))
@@ -181,7 +132,6 @@
         (should (listp cands))
         (should (member target cands)))
 
-      ;; グローバルな状態セットではなく、新設計の ktn-headword オブジェクトを直接設定する
       (setq ktn--current-headword
             (ktn-headword--create
              :mode 'headword
@@ -194,7 +144,7 @@
 
       (should (string-match-p target (buffer-string))))))
 
-(ert-deftest ktn-mode-off/test1 ()
+(ert-deftest mode/toggle-off ()
   (with-temp-buffer
     (let* ((key (kbd "C-x C-j"))
            (old (global-key-binding key)))
