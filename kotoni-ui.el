@@ -619,31 +619,47 @@
            (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
                        (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
                      (ktn-headword-buffer hw)))
-           (text (cond ((ktn--mode-p 'converting)
-                        (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw))))
-                       (t
+
+           ;; 候補や入力から得られる純粋な確定テキスト
+           (base-text (if (ktn--mode-p 'converting)
+                          (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
                         (concat (ktn-headword-buffer hw)
                                 (ktn-headword-roma-buffer hw)
                                 (ktn-headword-okuri-buffer hw)
-                                (ktn-headword-okuri-roma-buffer hw)))))
+                                (ktn-headword-roma-buffer hw))))
+
+           ;; hw に保持されているペンディング句読点があれば文字列化
+           (punct-str (let ((p (ktn-headword-pending-punct hw)))
+                        (and (stringp p)
+                             (not (string-empty-p p))
+                             p)))
+
+           ;; バッファ挿入用のフルテキスト（句読点込み）
+           (text (if punct-str
+                     (concat base-text punct-str)
+                   base-text))
            (pos (and (markerp (ktn-headword-start-marker hw))
                      (marker-position (ktn-headword-start-marker hw)))))
 
+      ;; 統計学習には、句読点を含まない「base-text」を使うため汚染されない
       (when (ktn--mode-p 'converting)
         (let ((cands-hash (gethash midasi ktn--stats-data)))
           (unless cands-hash
             (setq cands-hash (make-hash-table :test 'equal))
             (puthash midasi cands-hash ktn--stats-data))
-          (puthash text (1+ (gethash text cands-hash 0)) cands-hash)
+          (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
           (ktn-save-stats)))
 
+      (setf (ktn-headword-pending-punct hw) "")
       (ktn--cleanup-headword)
       (when pos
         (goto-char pos)
         (insert text))
 
       (when (fboundp #'ktn--hassamu-on-kakutei)
-        (ktn--hassamu-on-kakutei text)))))
+        ;; 必要に応じてフック側へ渡すテキストを base-text にするか text にするか調整可能
+        (ktn--hassamu-on-kakutei base-text)))
+    ))
 
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."

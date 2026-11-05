@@ -34,6 +34,7 @@
   (completion-base       nil)           ; 補完基準テキスト
   (completion-tab-count  0)             ; TAB連打カウント
   (headword-overlay      nil)           ; オーバーレイ参照
+  (pending-punct         "")            ; 句読点
   
   ;; hassamu 連携用フィールド
   (hassamu-active-p        nil)
@@ -148,52 +149,74 @@
   
   (let* ((hw       ktn--current-headword)
          (ch-int   (ktn--to-char-int ch))
+         (is-punct (member ch-int '(?, ?.)))
          (is-upper (ktn--upper-case-p ch-int))
-         (lower-ch (if is-upper (+ ch-int 32) ch-int))
+         (lower-ch (if is-upper (+ ch-int 32)
+                     ch-int))
          (is-alpha (ktn--lower-case-p lower-ch)))
 
     (ktn--reset-completion hw)
 
-    (if is-upper
-        ;; 送り仮名入力の開始
-        (progn
-          (unless (string-empty-p (ktn-headword-roma-buffer hw))
-            (setf (ktn-headword-buffer hw)
-                  (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
-                  (ktn-headword-roma-buffer hw) ""))
+    (cond
+     ;; 1. 句読点（, または .）が押された場合：ローマ字テーブルを参照して変換・ペンディング
+     (is-punct
+      (unless (string-empty-p (ktn-headword-roma-buffer hw))
+        (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) "")))
+          (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (car res))
+                (ktn-headword-roma-buffer hw) "")))
 
-          (when (string-suffix-p "n" (ktn-headword-buffer hw))
-            (setf (ktn-headword-buffer hw)
-                  (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+      ;; 入力された文字（, や .）を文字列化し、ktn-roma-table（process-roma-input）経由で変換
+      (let* ((char-str (char-to-string ch-int))
+             (res (ktn--process-roma-input "" char-str))
+             ;; 変換結果（car）があればそれを、なければそのままの文字を使う
+             (punct-val (if (not (string-empty-p (car res)))
+                            (car res)
+                          char-str)))
+        (setf (ktn-headword-pending-punct hw) punct-val))
 
-          (let ((char-str (ktn--safe-char-to-string lower-ch)))
-            (setf (ktn-headword-okuri-roma-first hw) char-str
-                  (ktn-headword-okuri-roma-buffer hw) char-str
-                  (ktn-headword-okuri-buffer hw) "")
-            (let ((res (ktn--process-roma-input "" char-str)))
-              (unless (string-empty-p (car res))
-                (setf (ktn-headword-okuri-buffer hw) (car res)
-                      (ktn-headword-okuri-roma-buffer hw) (cdr res))
-                (when start-henkan-fn
-                  (funcall start-henkan-fn))))))
+      (when start-henkan-fn
+        (funcall start-henkan-fn)))
 
-      ;; 通常の見出し語または送り文字の継続
-      (if (string-empty-p (ktn-headword-okuri-roma-first hw))
-          (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-                 (res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
-            (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (car res))
-                  (ktn-headword-roma-buffer hw) (cdr res)))
+     ;; 2. 大文字入力
+     (is-upper
+      (unless (string-empty-p (ktn-headword-roma-buffer hw))
+        (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) "")))
+          (setf (ktn-headword-buffer hw)
+                (concat (ktn-headword-buffer hw) (car res))
+                (ktn-headword-roma-buffer hw) (cdr res))))
 
-        (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-               (saved-roma (ktn-headword-roma-buffer hw)))
-          (setf (ktn-headword-roma-buffer hw) (ktn-headword-okuri-roma-buffer hw))
-          (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
-            (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (car res))
-                  (ktn-headword-okuri-roma-buffer hw) (cdr res)
-                  (ktn-headword-roma-buffer hw) saved-roma)
-            (unless (string-empty-p (ktn-headword-okuri-buffer hw))
-              (when start-henkan-fn
-                (funcall start-henkan-fn)))))))))
+      (when (string-suffix-p "n" (ktn-headword-buffer hw))
+        (setf (ktn-headword-buffer hw)
+              (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+
+      (let* ((char-str (ktn--safe-char-to-string lower-ch))
+             (res (ktn--process-roma-input "" char-str)))
+        (setf (ktn-headword-okuri-roma-first hw) char-str
+              (ktn-headword-okuri-buffer hw) (car res)
+              (ktn-headword-okuri-roma-buffer hw) (cdr res))))
+
+     ;; 3. 送り仮名入力中（ktn-headword-okuri-roma-first が空でない場合）
+     ((not (string-empty-p (ktn-headword-okuri-roma-first hw)))
+      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch
+                                                   ch-int)))
+             (res (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) char-str)))
+        (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (car res))
+              (ktn-headword-okuri-roma-buffer hw) (cdr res)))
+
+      ;; 送り仮名のローマ字入力が完了し、ひらがなとして成立した瞬間に自動変換を開始
+      (when (and (string-empty-p (ktn-headword-okuri-roma-buffer hw))
+                 (not (string-empty-p (ktn-headword-okuri-buffer hw))))
+        (when start-henkan-fn
+          (funcall start-henkan-fn))))
+
+     ;; 4. 通常の見出し語入力の継続
+     (t
+      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch
+                                                   ch-int)))
+             (res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
+        (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (car res))
+              (ktn-headword-roma-buffer hw) (cdr res))))
+     )))
 
 (defun ktn--handle-converting-mode (ch)
   "▼時の入力処理。"
