@@ -54,9 +54,17 @@
   :type 'integer
   :group 'kotoni)
 
+(defcustom ktn-newline-on-enter t
+  "非nilの場合、変換確定時の RET キー打鍵による改行を抑制する。"
+  :type 'boolean
+  :group 'ktn)
+
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
+
 (defvar-local ktn--saved-cursor-color nil)
+
 (defconst ktn-candidate-buffer-name " *ktn-candidates*")
+
 (defvar ktn-lighter "")
 
 ;; | 10進 | 16進 | ASCII                           | Emacs Lisp での主な ?\ 表記        |
@@ -100,7 +108,6 @@
     ((C-j 10)                     . ktn-kakutei)
     ((C-m 13 RET return [return]) . ktn-return-key-handler)
     ((SPC 32)                     . ktn-start-henkan)
-    ((?q)                         . ktn-katakana-convert-or-insert)
     ((TAB tab [tab] ?\t)          . ktn-tab-key-handler)
     ((<prior> prior)              . ktn-prior-page) ; PgUp
     ((<next> next)                . ktn-next-page)) ; PgDn
@@ -108,21 +115,15 @@
 
 ;;; 表示・描画系関数
 (defun ktn--set-cursor-red ()
-  (setq ktn--saved-cursor-color (or ktn--saved-cursor-color (frame-parameter nil 'cursor-color) (face-attribute 'cursor :background)))
+  (setq ktn--saved-cursor-color (or ktn--saved-cursor-color
+                                    (frame-parameter nil 'cursor-color)
+                                    (face-attribute 'cursor :background)))
   (set-cursor-color "red"))
 
 (defun ktn--unset-cursor-red ()
   (when ktn--saved-cursor-color
     (set-cursor-color ktn--saved-cursor-color)
     (setq ktn--saved-cursor-color nil)))
-
-(add-to-list 'display-buffer-alist
-             (list (concat "\\`" (regexp-quote ktn-candidate-buffer-name) "\\'")
-                   '(display-buffer-in-side-window)
-                   '(side . bottom)
-                   '(slot . 0)
-                   '(window-height . fit-window-to-buffer)
-                   '(window-parameters . ((no-other-window . t) (no-delete-other-windows . t)))))
 
 (defun ktn--get-or-create-candidate-buffer ()
   (get-buffer-create ktn-candidate-buffer-name))
@@ -156,22 +157,27 @@
   (when ktn--current-headword
     (let* ((hw ktn--current-headword)
            (current-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-                                  (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
-                                  (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw))))
+                                  (unless (string-empty-p (ktn-headword-okuri-roma-first hw))
+                                    "*")
+                                  (ktn-headword-okuri-buffer hw)
+                                  (ktn-headword-okuri-roma-buffer hw))))
       (when (and (ktn--mode-p 'headword)
                  (string-empty-p (ktn-headword-okuri-roma-first hw))
                  (not (string-empty-p current-input)))
         (ktn--ensure-completion-cands hw current-input)
         (when (ktn-headword-completion-cands hw)
           (let ((first-cand (nth (ktn-headword-completion-index hw) (ktn-headword-completion-cands hw))))
-            (when (and first-cand (string-prefix-p current-input first-cand))
+            (when (and first-cand
+                       (string-prefix-p current-input first-cand))
               (substring first-cand (length current-input)))))))))
 
 (defun ktn--update-inline-display ()
   (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
-      (when (and ktn--current-headword (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
+      (when (and ktn--current-headword
+                 (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
         (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
         (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
+
     (unless (and ktn--current-headword 
                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)) 
                  (overlay-buffer (ktn-headword-headword-overlay ktn--current-headword)))
@@ -187,11 +193,15 @@
              (display-headword (concat "▽" input-str))
              (_ (ktn--ensure-completion-cands hw input-str))
              (preview-suffix (ktn--get-current-completion-suffix)))
-        (if (and preview-suffix (not (string-empty-p preview-suffix)))
+        (if (and preview-suffix
+                 (not (string-empty-p preview-suffix)))
             (progn
-              (overlay-put (ktn-headword-headword-overlay hw) 'before-string (propertize display-headword 'face 'ktn-headword-face))
-              (overlay-put (ktn-headword-headword-overlay hw) 'after-string (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
-          (overlay-put (ktn-headword-headword-overlay hw) 'before-string (propertize display-headword 'face 'ktn-headword-face))
+              (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                           (propertize display-headword 'face 'ktn-headword-face))
+              (overlay-put (ktn-headword-headword-overlay hw) 'after-string
+                           (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
+          (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                       (propertize display-headword 'face 'ktn-headword-face))
           (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
      ((ktn--mode-p 'converting)
       (let* ((hw ktn--current-headword)
@@ -201,18 +211,19 @@
                              ((listp cand) (format "%s" (car cand)))
                              (t (format "%s" cand))))
              (display-str (concat "▼" cand-str)))
-        (overlay-put (ktn-headword-headword-overlay hw) 'before-string (propertize display-str 'face 'ktn-headword-face))
+        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                     (propertize display-str 'face 'ktn-headword-face))
         (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))))
 
 (defun ktn--show-candidates-window ()
   (if (not (ktn--mode-p 'converting))
       (ktn--close-candidate-window)
-    (let* ((hw ktn--current-headword)
-           (total (length (ktn-headword-candidates hw)))
-           (page-size (length ktn-select-keys))
+    (let* ((hw           ktn--current-headword)
+           (total        (length (ktn-headword-candidates hw)))
+           (page-size    (length ktn-select-keys))
            (current-page (/ (ktn-headword-candidate-index hw) page-size))
-           (start (* current-page page-size))
-           (end (min total (+ start page-size)))
+           (start        (* current-page page-size))
+           (end          (min total (+ start page-size)))
            parts)
       (cl-loop for i from start below end
                for cand-cell = (nth i (ktn-headword-candidates hw))
@@ -360,21 +371,6 @@
 (defun ktn--hw-set-roma (hw val)
   (setf (aref hw 3) val))
 
-(defun ktn-katakana-convert-or-insert ()
-  "Convert current headword to Katakana if in headword mode, otherwise insert `q'."
-  (interactive)
-  (if (not (ktn--mode-p 'headword))
-      (insert "q")
-    (let* ((hw   ktn--current-headword)
-           (raw-buf  (ktn--hw-buffer hw))
-           (raw-roma (ktn--hw-roma hw))
-           (combined (concat raw-buf raw-roma)))
-      (when (string-suffix-p "n" combined)
-        (setq combined (concat (substring combined 0 -1) "ん")))
-      (let* ((kata (ktn--hiragana-to-katakana combined)))
-        (ktn--cleanup-headword)
-        (insert kata)))))
-
 (defun ktn--headword-completion ()
   "見出し語入力中のTAB補完処理。"
   (when (and ktn--current-headword (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
@@ -430,21 +426,14 @@
                     (eq ch keys))))
               ktn-dispatch-table))
 
-;;; 各種特殊キーのハンドラ（動的な状態分岐をカプセル化）
 (defun ktn-return-key-handler ()
-  "RET / C-m 打鍵時の処理。"
-  (interactive)
-  (if ktn--current-headword
-      (ktn-kakutei-and-newline)
-    (newline)))
-
-(defun ktn-kakutei-and-newline ()
-  "Commit current headword/conversion if active, otherwise insert a newline."
+  "RET / C-m 打鍵時の処理"
   (interactive)
   (if ktn--current-headword
       (progn
         (ktn-kakutei)
-        (newline))
+        (and ktn-newline-on-enter
+          (newline)))
     (newline)))
 
 (defun ktn-tab-key-handler ()
@@ -547,8 +536,8 @@
   "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
   (interactive)
   (barf-if-buffer-read-only)
-  (let* ((ch last-command-event)
-         (matched (ktn--lookup-dispatch ch)))
+  (let* ((ch      last-command-event)
+         (matched (ktn--lookup-dispatch ch))) ; ktn-dispatch-table
 
     (cond
      ;; 1. テーブルにヒットした場合、対応するコマンドを実行
@@ -560,7 +549,7 @@
       (ktn--handle-headword-mode ch #'ktn-start-henkan)
       (ktn--update-inline-display))
 
-     ;; 3. ▽ 見出し語入力モード中の文字入力（ローマ字など）
+     ;; 3. ▼ モード
      ((ktn--mode-p 'converting)
       (ktn--handle-converting-mode ch)
       (ktn--update-inline-display))
@@ -629,15 +618,13 @@
                                 (ktn-headword-roma-buffer hw))))
 
            ;; hw に保持されているペンディング句読点があれば文字列化
-           (punct-str (let ((p (ktn-headword-pending-punct hw)))
-                        (and (stringp p)
-                             (not (string-empty-p p))
-                             p)))
+           (p-proc (ktn-headword-post-processor hw))
 
            ;; バッファ挿入用のフルテキスト（句読点込み）
-           (text (if punct-str
-                     (concat base-text punct-str)
+           (text (if (functionp p-proc)
+                     (funcall p-proc base-text)
                    base-text))
+
            (pos (and (markerp (ktn-headword-start-marker hw))
                      (marker-position (ktn-headword-start-marker hw)))))
 
@@ -650,7 +637,7 @@
           (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
           (ktn-save-stats)))
 
-      (setf (ktn-headword-pending-punct hw) "")
+      (setf (ktn-headword-post-processor hw) nil)
       (ktn--cleanup-headword)
       (when pos
         (goto-char pos)
@@ -705,6 +692,15 @@
 
     (unless (memq #'ktn-save-stats kill-emacs-hook)
       (add-hook 'kill-emacs-hook #'ktn-save-stats))
+
+    (add-to-list 'display-buffer-alist
+                 (list (concat "\\`" (regexp-quote ktn-candidate-buffer-name) "\\'")
+                       '(display-buffer-in-side-window)
+                       '(side . bottom)
+                       '(slot . 0)
+                       '(window-height . fit-window-to-buffer)
+                       '(window-parameters . ((no-other-window . t) (no-delete-other-windows . t)))))
+
     t))
 
 ;;;###autoload
@@ -714,11 +710,14 @@
   :global nil
   :keymap ktn-mode-map
   (if ktn-mode
-      (progn (ktn-setup) (ktn--set-cursor-red))
+      (progn (ktn-setup)
+             (ktn--set-cursor-red))
     (ktn--state-reset)
     (ktn--unset-cursor-red)
     (ktn--cleanup-headword))
-  (setq ktn-lighter (if ktn-mode ktn-indicator ""))
+  (setq ktn-lighter (if ktn-mode
+                        ktn-indicator
+                      ""))
   (force-mode-line-update))
 
 (provide 'kotoni-ui)
