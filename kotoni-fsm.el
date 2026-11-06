@@ -57,11 +57,10 @@
 
 (defun ktn--to-char-int (ch)
   "入力文字 CH を安全に整数文字コードに変換する。"
-  (cond
-   ((integerp   ch) ch)
-   ((characterp ch) ch)
-   ((stringp    ch) (string-to-char ch))
-   (t 0)))
+  (cl-typecase ch
+    ((or integer character) ch)
+    (string (string-to-char ch))
+    (t 0)))
 
 (defun ktn--upper-case-p (ch-int)
   (and (<= ?A ch-int) (<= ch-int ?Z)))
@@ -72,12 +71,12 @@
 (defun ktn--number-key-p (ch-int)
   (and (<= ?1 ch-int) (<= ch-int ?9)))
 
+
 (defun ktn--safe-char-to-string (ch)
-  (cond
-   ((stringp ch) (string-to-multibyte ch))
-   ((characterp ch) (char-to-string ch))
-   ((integerp ch) (char-to-string ch))
-   (t "")))
+  (cl-typecase ch
+    (string (string-to-multibyte ch))
+    ((or character integer) (char-to-string ch))
+    (t "")))
 
 (defun ktn--roma-prefix-p (prefix)
   (cl-some (lambda (pair)
@@ -261,14 +260,12 @@
 
 (defun ktn--hiragana-to-katakana (str)
   "ひらがな文字列 STR をカタカナに変換する。"
-  (apply #'string
-         (mapcar (lambda (c)
-                   (if (and (>= c #x3041)  ; ?ぁ
-                            (<= c #x309F)) ; ?ゟ ※「より」という2文字を1文字にまとめた合字
-                       (+ c #x60)
-                     c))
-                 str)))
-
+  (concat
+   (cl-loop for c across str
+            collect (if (and (>= c #x3041)  ; ?ぁ
+                             (<= c #x309F)) ; ?ゟ ※「より」という2文字を1文字にまとめた合字
+                        (+ c #x60)
+                      c))))
 
 ;;; ライフサイクル管理関数
 
