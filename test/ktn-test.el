@@ -1,5 +1,10 @@
 ;;; ktn-test.el --- E2E tests for Kotoni (JSON Dictionary Support) -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026
+;; Version: 0.1
+;; Author: Tsuyoshi Kitamoto <tsuyohi.kitamoto@gmail.com>
+;; License: GPL-3.0-or-later
+
 ;;; Commentary:
 
 (require 'cl-lib)
@@ -104,10 +109,12 @@
  ("1/conversion/select-key"         "K a n j i SPC 1"                      "漢字")
  ("2/headword/backspace"            "K a k i C-h n j i SPC C-j"            "漢字")
  ("2/headword/completion"           "K a TAB TAB C-j"                      "かんじ")
+ ("3/conversion/okuri"              "S i T t a C-j"                        "知った")
  ("3/conversion/backspace"          "K a n j i SPC C-h q"                  "カンジ")
  ("3/conversion/kakutei-newline"    "K a n j i SPC RET s a"                "漢字\nさ")
  ("3/conversion/punctuation-comma"  "K a n j i , C-j"                      "漢字、")
  ("3/conversion/punctuation-period" "K a n j i . C-j"                      "漢字。")
+ ("3/conversion/bracket"            "K a n j i [ C-j"                      "「漢字」")
  ("3/conversion/page-navigation"    "K a n j i SPC SPC <next> <prior> C-j" "漢字")
  ("3/conversion/previous-candidate" "K a n j i SPC x C-j"                  "幹事")
  ("3/conversion/continuous1"        "K a n j i SPC s a i C-j"              "漢字さい")
