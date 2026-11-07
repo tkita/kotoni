@@ -10,9 +10,16 @@
 ;;; Commentary:
 ;; Convert a SKK JISYO dictionary file into JSON.
 ;; == *scratch* ==
-;; (let ((skk-files '("/path/to/SKK-JISYO.L"
-;;                    "/path/to/my-jisyo.skk")))
-;;   (skk2json-merge-skk-dicts-to-json skk-files (expand-file-name "~/jisyo.json"))) [C-j]
+;; (let* ((root (expand-file-name "~/jisyo"))
+;;        (files '("SKK-JISYO.L"
+;;                 "SKK-JISYO.geo"
+;;                 "SKK-JISYO.jinmei"
+;;                 "SKK-JISYO.law"
+;;                 "SKK-JISYO.propernoun"
+;;                 "SKK-JISYO.station"))
+;;        (skk-files (mapcar (lambda (file)
+;;                             (expand-file-name file root)) files)))
+;;   (skk2json-merge-skk-dicts-to-json skk-files (expand-file-name "jisyo.json" root)))
 ;; == *scratch* ==
 
 ;;; Code:
