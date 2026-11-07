@@ -1,12 +1,13 @@
 ;;; kotoni-ui.el --- UI & Interactive Command Layer for Kotoni -*- lexical-binding: t; coding: utf-8; -*-
 
 ;; Copyright (C) 2026
-;; Version: 0.1
+;; Version: 0.2
 ;; Author: Tsuyoshi Kitamoto <tsuyohi.kitamoto@gmail.com>
 ;; License: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; 第1階層：Emacsのキーバインド・バッファ表示・オーバーレイ・ウィンドウ描画を担当する最上位モジュール。
+;; ktn辞書（Trie-JSON）の高速な補完・変換結果をインタラクティブに表示・制御する。
 
 ;;; Code:
 
@@ -72,41 +73,6 @@ Each function is called with one argument: BASE-TEXT."
 (defconst ktn-candidate-buffer-name " *ktn-candidates*")
 
 (defvar ktn-lighter "")
-
-;; | 10進 | 16進 | ASCII                           | Emacs Lisp での主な ?\ 表記        |
-;; |------|------|---------------------------------|------------------------------------|
-;; |  0   | 00   | NUL (Null文字)                  |  ?\0 (または ?\C-@)                |
-;; |  1   | 01   | SOH (Start of Heading)          |  ?\C-a                             |
-;; |  2   | 02   | STX (Start of Text)             |  ?\C-b                             |
-;; |  3   | 03   | ETX (End of Text)               |  ?\C-c                             |
-;; |  4   | 04   | EOT (End of Transmission)       |  ?\C-d                             |
-;; |  5   | 05   | ENQ (Enquiry)                   |  ?\C-e                             |
-;; |  6   | 06   | ACK (Acknowledge)               |  ?\C-f                             |
-;; |  7   | 07   | BEL (Alert / Bell)              |  ?\a (または ?\C-g)                |
-;; |  8   | 08   | BS  (Backspace)                 |  ?\b (または ?\C-h)                |
-;; |  9   | 09   | HT  (Tab)                       |  ?\t (または ?\C-i, 'tab, 'TAB)    |
-;; | 10   | 0a   | LF  (Line Feed / Newline)       |  ?\n (または ?\C-j)                |
-;; | 11   | 0b   | VT  (Vertical Tab)              |  ?\v (または ?\C-k)                |
-;; | 12   | 0c   | FF  (Form Feed)                 |  ?\f (または ?\C-l)                |
-;; | 13   | 0d   | CR  (Carriage Return)           |  ?\r (または ?\C-m, 'RET, 'return) |
-;; | 14   | 0e   | SO  (Shift Out)                 |  ?\C-n                             |
-;; | 15   | 0f   | SI  (Shift In)                  |  ?\C-o                             |
-;; | 16   | 10   | DLE (Data Link Escape)          |  ?\C-p                             |
-;; | 17   | 11   | DC1 (Device Control 1 (XON))    |  ?\C-q                             |
-;; | 18   | 12   | DC2 (Device Control 2)          |  ?\C-r                             |
-;; | 19   | 13   | DC3 (Device Control 3 (XOFF))   |  ?\C-s                             |
-;; | 20   | 14   | DC4 (Device Control 4)          |  ?\C-t                             |
-;; | 21   | 15   | NAK (Negative Acknowledge)      |  ?\C-u                             |
-;; | 22   | 16   | SYN (Synchronous Idle)          |  ?\C-v                             |
-;; | 23   | 17   | ETB (End of Transmission Block) |  ?\C-w                             |
-;; | 24   | 18   | CAN (Cancel)                    |  ?\C-x                             |
-;; | 25   | 19   | EM  (End of Medium)             |  ?\C-y                             |
-;; | 26   | 1a   | SUB (Substitute)                |  ?\C-z                             |
-;; | 27   | 1b   | ESC (Escape)                    |  ?\e (または ?\C-[)                |
-;; | 28   | 1c   | FS  (File Separator)            |  ?\C-\                             |
-;; | 29   | 1d   | GS  (Group Separator)           |  ?\C-]                             |
-;; | 30   | 1e   | RS  (Record Separator)          |  ?\C-^                             |
-;; | 31   | 1f   | US  (Unit Separator)            |  ?\C-_                             |
 
 (defconst ktn-dispatch-table
   '(((C-g  7)                     . ktn-quit)
@@ -211,7 +177,6 @@ Each function is called with one argument: BASE-TEXT."
                                             (if (= i current-page) "■" "□"))
                                           (number-sequence 0 (1- total-pages))
                                           ""))
-         ;; ウィンドウ幅を超える場合は数値表記にフォールバック
          (max-avail-width      (- win-width 4))
          (display-page-str     (if (> (string-width page-str) max-avail-width)
                                    (format "(%d/%d)" (1+ current-page) total-pages)
@@ -321,7 +286,7 @@ Each function is called with one argument: BASE-TEXT."
          (base-len (length base)))
     (if (and (> base-len 0)
              (<= base-len (length candidate))
-             (string-prefix-p base candidate))  ;; 修正: base-string ではなく candidate と比較
+             (string-prefix-p base candidate))
         (concat
          (propertize (substring candidate 0 base-len) 'face 'ktn-completion-base-face)
          (propertize (substring candidate base-len)   'face 'ktn-completion-rest-face))
@@ -331,7 +296,6 @@ Each function is called with one argument: BASE-TEXT."
   "見出し語の TAB 補完候補ウィンドウを表示する。"
   (let* ((hw ktn--current-headword)
          (cands    (and hw (ktn-headword-completion-cands hw)))
-         ;; ▽ バッファではなく、保持している completion-base を確実に使う
          (base-str (and hw (ktn-headword-completion-base hw))))
     (if (not cands)
         (ktn--close-candidate-window)
@@ -364,7 +328,6 @@ Each function is called with one argument: BASE-TEXT."
               ((ktn--mode-p 'headword))
               ((string-empty-p (ktn-headword-okuri-roma-first hw)))
               ((not (string-empty-p current-input))))
-    ;; ▼ TAB巡回中（tab-count > 0）は勝手な再絞り込みをしない
     (unless (> (ktn-headword-completion-tab-count hw) 0)
       (ktn--ensure-completion-cands hw current-input))
     (when-let* ((cands (ktn-headword-completion-cands hw))
@@ -373,20 +336,15 @@ Each function is called with one argument: BASE-TEXT."
       (substring first-cand (length current-input)))))
 
 (defun ktn--ensure-completion-cands (hw current-input)
-  "CURRENT-INPUT に対する補完候補をロード・維持する。
-前方一致（入力増加）時: 既存の候補リストから高速に絞り込む。
-入力変更・Backspace 時: 必要に応じて再検索または復元を行う。"
+  "CURRENT-INPUT に対する補完候補をロード・維持する。"
   (let ((base  (ktn-headword-completion-base hw))
         (cands (ktn-headword-completion-cands hw)))
     (cond
-     ;; 入力が空の場合はキャッシュを完全クリア
      ((string-empty-p current-input)
       (setf (ktn-headword-completion-base hw) nil
             (ktn-headword-completion-cands hw) nil
             (ktn-headword-completion-index hw) 0))
 
-     ;; 1. 入力文字が増えた場合（例: base="さ", current-input="さし"）
-     ;; 辞書全体ではなく、既存の cands から前方一致で高速絞り込み
      ((and base cands (string-prefix-p base current-input))
       (let ((filtered (cl-remove-if-not
                        (lambda (cand) (string-prefix-p current-input cand))
@@ -395,8 +353,6 @@ Each function is called with one argument: BASE-TEXT."
               (ktn-headword-completion-cands hw) filtered
               (ktn-headword-completion-index hw) 0)))
 
-     ;; 2. 初回検索、または Backspace 等で prefix 関係が崩れた場合
-     ;; ※ current-input が base と不一致、または未設定の場合のみ全体検索
      ((or (null base)
           (null cands)
           (not (string-prefix-p base current-input)))
@@ -405,20 +361,13 @@ Each function is called with one argument: BASE-TEXT."
             (ktn-headword-completion-cands hw) (ktn--complete-search-headword current-input))))))
 
 (defun ktn--headword-completion (&optional delta)
-  "見出し語入力中の補完処理。DELTA（省略時は 1）に応じてインデックスを前後に巡回させる。"
+  "見出し語入力中の補完処理。"
   (interactive)
   (let ((d (or delta 1)))
-
-    ;; 見出し語の補完は、送り仮名ローマ字が空の場合のみ実行
     (when (and ktn--current-headword
                (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
-
       (let* ((hw ktn--current-headword)
-             ;; 初回 TAB 押下時の入力文字列（例: "とうきょう"）をベースとして取得
              (raw-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))))
-        
-        ;; まだ completion-base が設定されていない（＝初回の TAB）場合のみ、
-        ;; 現在の入力をベースとしてロックし、全候補リストを一度だけ取得する
         (unless (ktn-headword-completion-base hw)
           (setf (ktn-headword-completion-base hw) raw-input
                 (ktn-headword-completion-cands hw) (ktn--complete-search-headword raw-input)
@@ -429,28 +378,21 @@ Each function is called with one argument: BASE-TEXT."
             (let* ((total     (length cands))
                    (tab-count (ktn-headword-completion-tab-count hw))
                    (idx       (ktn-headword-completion-index hw))
-                   ;; 初回（tab-count == 0）かつ順方向なら現在のインデックス（0）を維持、
-                   ;; それ以外は delta 分だけ進める/戻す
                    (new-idx (if (and (= tab-count 0)
                                      (= d 1))
                                 idx
                               (mod (+ idx d) total)))
                    (chosen (nth new-idx cands)))
-              
-              ;; 状態を更新（completion-base や completion-cands は上書きせず維持する）
               (setf (ktn-headword-completion-tab-count hw) (1+ tab-count)
                     (ktn-headword-completion-index hw) new-idx
                     (ktn-headword-buffer hw) chosen
                     (ktn-headword-roma-buffer hw) "")
-              
               (ktn--update-inline-display)
-
-              ;; TAB(2) 以降（tab-count が 1 以上）のとき、別ウィンドウに全候補一覧を表示する
               (when (> (ktn-headword-completion-tab-count hw) 1)
                 (ktn--show-completion-window)))))))))
 
 ;;;
-;;;
+;;; 辞書登録・アクション系
 ;;;
 
 (defun ktn--prompt-dict-registration ()
@@ -545,66 +487,6 @@ Each function is called with one argument: BASE-TEXT."
    (t
     (delete-char -1))))
 
-
-;; | 現在の状態              | 入力 / イベント    | 次の状態       | アクション / 備考                  |
-;; |-------------------------|--------------------|----------------|------------------------------------|
-;; | 初期状態 (Emacs normal) | `C-x C-j`          | ktn-mode       | かな入力のため ktn-mode へ         |
-;; | ktn-mode                | `C-x C-j`          | 初期状態       | ktn-mode を抜け、初期状態へ        |
-;; | ktn-mode                | a-z.*              | ktn-mode       | 直接ローマ字かな変換               |
-;; | ktn-mode                | A-Z                | ▽モード       | 見出し語入力を開始                 |
-;; | ▽モード                | 小文字             | ▽モード       | ローマ字かな変換                   |
-;; | ▽モード                | `C-g`              | ktn-mode       | ▽モードを破棄して戻る             |
-;; | ▽モード                | TAB                | ktn-mode       | 見出し語を補完                     |
-;; | ▽モード                | `C-j` / `RET`      | ktn-mode       | ▽モードを破棄して戻る(溜まった見出し語はバッファ挿入) |
-;; | ▽モード                | `SPC`              | ▼モード       | 見出し語を確定し、漢字候補を表示   |
-;; | ▼モード                | `C-g`              | ▽モード       | 漢字変換を取り消し、見出し語へ戻る |
-;; | ▼モード                | `C-j` / `RET`      | ktn-mode       | 漢字候補を確定し、ktn-mode へ      |
-;; | ▼モード                | `SPC` (次候補あり) | ▼モード       | 次の変換候補を表示                 |
-;; | ▼モード                | `x`   (前候補あり) | ▼モード       | ひとつ前の変換候補を表示           |
-;; | ▼モード                | `SPC` (候補なし)   | 辞書登録モード | 個人辞書登録へ移行                 |
-;; | 辞書登録モード          | 登録完了           | ktn-mode       | 登録語を反映し、ktn-mode へ戻る    |
-
-;; stateDiagram-v2
-;;     [*] --> Normal : ktn-mode有効
-
-;;     state Normal {
-;;         [*] --> 待機中
-;;         待機中 --> 待機中 : 小文字/通常入力 (a-z) <br/>[直接ローマ字かな変換・挿入]
-;;     }
-
-;;     %% Normal からの遷移
-;;     Normal --> Headword : 大文字入力 (A-Z) <br/>[▽ 見出し語入力開始]
-
-;;     state Headword {
-;;         [*] --> 見出し入力
-;;         見出し入力 --> 見出し入力 : ローマ字入力 / 継続
-;;         見出し入力 --> 見出し入力 : TAB <br/>[補完候補の循環]
-;;     }
-
-;;     %% Headword からの遷移
-;;     Headword --> Headword : 大文字入力 (A-Z) <br/>[送り仮名入力開始 / ▽再トリガー]
-;;     Headword --> Converting : SPC <br/>[漢字変換開始・候補取得]
-;;     Headword --> DictRegister : SPC (候補なし) <br/>[未登録語の辞書登録へ]
-;;     Headword --> Normal : C-j / RET <br/>[入力を確定してバッファへ挿入]
-;;     Headword --> Normal : C-g <br/>[入力を破棄・キャンセル]
-
-;;     state Converting {
-;;         [*] --> 候補選択
-;;         候補選択 --> 候補選択 : SPC / x <br/>[次/前候補へ移動・ページ送り]
-;;     }
-
-;;     %% Converting からの遷移
-;;     Converting --> Converting : SPC (末尾候補) <br/>[辞書登録へ移行]
-;;     Converting --> Headword : 大文字入力 (A-Z) <br/>[現変換を確定 ＋ 新規 ▽ 開始]
-;;     Converting --> Headword : C-g <br/>[変換キャンセルして ▽ へ戻る]
-;;     Converting --> Normal : C-j / RET <br/>[選択候補を確定して通常モードへ]
-
-;;     state DictRegister {
-;;         [*] --> ミニバッファ入力
-;;     }
-
-;;     DictRegister --> Normal : 登録完了 / C-g <br/>[新単語を登録して通常モードへ]
-
 (defun ktn--lookup-dispatch (ch)
   "キーイベント CH にマッチする `ktn-dispatch-table' のエントリを検索。"
   (cl-find-if (lambda (entry)
@@ -619,29 +501,20 @@ Each function is called with one argument: BASE-TEXT."
   (interactive)
   (barf-if-buffer-read-only)
   (let* ((ch      last-command-event)
-         (matched (ktn--lookup-dispatch ch))) ; ktn-dispatch-table
-
+         (matched (ktn--lookup-dispatch ch)))
     (cond
-     ;; 1. テーブルにヒットした場合、対応するコマンドを実行
      (matched
       (call-interactively (cdr matched)))
-
-     ;; 2. ▽ 見出し語入力モード中の文字入力（ローマ字など）
      ((ktn--mode-p 'headword)
       (ktn--handle-headword-mode ch #'ktn-start-henkan)
       (ktn--update-inline-display))
-
-     ;; 3. ▼ モード
      ((ktn--mode-p 'converting)
       (ktn--handle-converting-mode ch)
       (ktn--update-inline-display))
-
-     ;; 4. 通常モードの文字入力など
      (t
       (ktn--handle-normal-mode ch)
       (when (ktn--mode-p 'headword)
         (ktn--update-inline-display))))))
-
 
 (defun ktn-start-henkan ()
   "Start conversion or cycle through candidates with SPC."
@@ -693,29 +566,20 @@ Each function is called with one argument: BASE-TEXT."
          (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
                      (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
                    (ktn-headword-buffer hw)))
-
-         ;; 候補や入力から得られる純粋な確定テキスト
          (base-text (if (ktn--mode-p 'converting)
                         (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
                       (concat (ktn-headword-buffer hw)
                               (ktn-headword-roma-buffer hw)
                               (ktn-headword-okuri-buffer hw))))
-
-         ;; hw に保持されているペンディング句読点があれば文字列化
          (p-proc (ktn-headword-post-processor hw))
-
-         ;; バッファ挿入用のフルテキスト（句読点込み）
          (text (if (functionp p-proc)
                    (funcall p-proc base-text)
                  base-text))
-
          (pos (and (markerp (ktn-headword-start-marker hw))
                    (marker-position (ktn-headword-start-marker hw)))))
 
-    ;; 今回の見出し語を直近の確定履歴（MRU）に追加
     (ktn--add-recent-history midasi)
 
-    ;; 統計学習には、句読点を含まない「base-text」を使うため汚染されない
     (when (ktn--mode-p 'converting)
       (let ((cands-hash (gethash midasi ktn--stats-data)))
         (unless cands-hash
@@ -730,8 +594,7 @@ Each function is called with one argument: BASE-TEXT."
       (goto-char pos)
       (insert text))
 
-    (run-hook-with-args 'ktn-kakutei-hook base-text)
-    ))
+    (run-hook-with-args 'ktn-kakutei-hook base-text)))
 
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."
@@ -739,7 +602,6 @@ Each function is called with one argument: BASE-TEXT."
   (cond
    ((ktn--mode-p 'headword)
     (ktn--cleanup-headword))
-
    ((ktn--mode-p 'converting)
     (let ((hw ktn--current-headword))
       (setf (ktn-headword-mode hw) 'headword
@@ -748,34 +610,36 @@ Each function is called with one argument: BASE-TEXT."
       (message "")
       (ktn--close-candidate-window)
       (ktn--update-inline-display)))
-
    (t 
-    ;; 通常モードでのquit時の処理 (必要に応じて拡張可能)
     (keyboard-quit))))
 
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
   (when (ktn--load-stats)
-    (unless ktn-roma-table
-      (ktn-setup-roma-table))
-    (setq ktn-dictionaries (list (make-ktn-dictionary :path ktn-jisyo-file :data nil)))
+    (ktn--setup-internal)))
 
-    (dolist (dict ktn-dictionaries)
-      (ktn--load-dictionary-data dict))
+(defun ktn--setup-internal ()
+  (unless ktn-roma-table
+    (ktn-setup-roma-table))
 
-    (unless (memq #'ktn-save-stats kill-emacs-hook)
-      (add-hook 'kill-emacs-hook #'ktn-save-stats))
+  (unless ktn-dictionaries
+    (setq ktn-dictionaries (list (make-ktn-dictionary :path ktn-jisyo-file :data nil))))
+    
+  (dolist (dict ktn-dictionaries)
+    (unless (ktn-dictionary-data dict)
+      (ktn--load-dictionary-data dict)))
 
-    (add-to-list 'display-buffer-alist
-                 (list (concat "\\`" (regexp-quote ktn-candidate-buffer-name) "\\'")
-                       '(display-buffer-in-side-window)
-                       '(side . bottom)
-                       '(slot . 0)
-                       '(window-height . fit-window-to-buffer)
-                       '(window-parameters . ((no-other-window . t) (no-delete-other-windows . t)))))
+  (unless (memq #'ktn-save-stats kill-emacs-hook)
+    (add-hook 'kill-emacs-hook #'ktn-save-stats))
 
-    t))
-
+  (add-to-list 'display-buffer-alist
+               (list (concat "\\`" (regexp-quote ktn-candidate-buffer-name) "\\'")
+                     '(display-buffer-in-side-window)
+                     '(side . bottom)
+                     '(slot . 0)
+                     '(window-height . fit-window-to-buffer)
+                     '(window-parameters . ((no-other-window . t) (no-delete-other-windows . t)))))
+  t)
 
 (provide 'kotoni-ui)
 ;;; kotoni-ui.el ends here

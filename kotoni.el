@@ -13,7 +13,7 @@
 ;; Example configuration:
 ;;   (add-to-list 'load-path "/path/to/kotoni")
 ;;   (setq ktn-user-roma-table '(("z," . "‥") ("z." . "…")))
-;;   (setq ktn-jisyo-file "/usr/share/skk/SKK-JISYO.L.json")
+;;   (setq ktn-jisyo-file "/usr/share/skk/SKK-JISYO.trie.json")
 ;;   (require 'kotoni)
 ;;   (global-set-key (kbd "C-x C-j") #'ktn-mode)
 

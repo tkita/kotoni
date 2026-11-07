@@ -1,12 +1,13 @@
 ;;; kotoni-data.el --- Data & Dictionary Storage Layer for Kotoni -*- lexical-binding: t; coding: utf-8; -*-
 
 ;; Copyright (C) 2026
-;; Version: 0.1
+;; Version: 0.2
 ;; Author: Tsuyoshi Kitamoto <tsuyohi.kitamoto@gmail.com>
 ;; License: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; 第3階層：辞書ファイル・個人統計・ローマ字テーブルの保持および検索を担当するモジュール。
+;; ktn辞書（Trie-JSON形式）による高速な前方一致検索と漢字変換をサポート。
 
 ;;; Code:
 
@@ -31,71 +32,71 @@
 (defvar ktn--stats-loaded-p nil)
 (defvar ktn--stats-data (make-hash-table :test 'equal))
 
-;;; 辞書構造体
+;;; 辞書構造体 (trie-json 対応)
 (cl-defstruct ktn-dictionary
-  path data headwords)
+  path data)
 
 (defvar ktn-dictionaries nil)
 
 ;;; ローマ字テーブル定義
 (defvar ktn-default-roma-table
-  '(("a"    . "あ")     ("i"   . "い")      ("u"    . "う")     ("e"   . "え")     ("o"    . "お")
-    ("ba"   . "ば")     ("bi"  . "び")      ("bu"   . "ぶ")     ("be"  . "べ")     ("bo"   . "ぼ") 
-    ("bya"  . "びゃ")   ("byi" . "びぃ")    ("byu"  . "びゅ")   ("bye" . "びぇ")   ("byo"  . "びょ")   
-    ("cha"  . "ちゃ")   ("chi" . "ち")      ("chu"  . "ちゅ")   ("che" . "ちぇ")   ("cho"  . "ちょ") 
-    ("cya"  . "ちゃ")   ("cyi" . "ちぃ")    ("cyu"  . "ちゅ")   ("cye" . "ちぇ")   ("cyo"  . "ちょ") 
-    ("da"   . "だ")     ("di"  . "ぢ")      ("du"   . "づ")     ("de"  . "で")     ("do"   . "ど") 
-    ("dha"  . "でゃ")   ("dhi" . "でぃ")    ("dhu"  . "でゅ")   ("dhe" . "でぇ")    ("dho" . "でょ")   
-                                            ("dwu"  . "どぅ")  
-    ("dya"  . "ぢゃ")   ("dyi" . "ぢぃ")    ("dyu"  . "ぢゅ")   ("dye" . "ぢぇ")   ("dyo"  . "ぢょ") 
-    ("fa"   . "ふぁ")   ("fi"  . "ふぃ")    ("fu"   . "ふ")     ("fe"  . "ふぇ")   ("fo"   . "ふぉ") 
-    ("fya"  . "ふゃ")   ("fyi" . "ふぃ")    ("fyu"  . "ふゅ")   ("fye" . "ふぇ")   ("fyo"  . "ふょ")
-    ("ga"   . "が")     ("gi"  . "ぎ")      ("gu"   . "ぐ")     ("ge"  . "げ")     ("go"   . "ご")
-    ("gwa"  . "ぐゎ")   ("gwi" . "ぐうぃ")  ("gwu"  . "ぐうぅ") ("gwe" . "ぐうぇ") ("gwo"  . "ぐうぉ")
-    ("gya"  . "ぎゃ")   ("gyi" . "ぎぃ")    ("gyu"  . "ぎゅ")   ("gye" . "ぎぇ")   ("gyo"  . "ぎょ") 
-    ("ha"   . "は")     ("hi"  . "ひ")      ("hu"   . "ふ")     ("he"  . "へ")     ("ho"   . "ほ")
-    ("hya"  . "ひゃ")   ("hyi" . "ひぃ")    ("hyu"  . "ひゅ")   ("hye" . "ひぇ")   ("hyo"  . "ひょ")
-    ("ja"   . "じゃ")   ("ji"  . "じ")      ("ju"   . "じゅ")   ("je"  . "じぇ")   ("jo"   . "じょ")
-    ("jya"  . "じゃ")   ("jyi" . "じぃ")    ("jyu"  . "じゅ")   ("jye" . "じぇ")   ("jyo"  . "じょ")
-    ("ka"   . "か")     ("ki"  . "き")      ("ku"   . "く")     ("ke"  . "け")     ("ko"   . "こ")
-    ("kwa"  . "くゎ")   ("kwi" . "くうぃ")  ("kwu"  . "くうぅ") ("kwe" . "くうぇ") ("kwo"  . "くうぉ")
-    ("kya"  . "きゃ")   ("kyi" . "きぃ")    ("kyu"  . "きゅ")   ("kye" . "きぇ")   ("kyo"  . "きょ")
-    ("la"   . "ぁ")     ("li"  . "ぃ")      ("lu"   . "ぅ")     ("le"  . "ぇ")     ("lo"   . "ぉ")
-    ("lka"  . "ヵ")                                             ("lke" . "ヶ")
-                                            ("ltsu" . "っ")
-                                            ("ltu"  . "っ")
+  '(("a"    . "あ")     ("i"    . "い")      ("u"    . "う")     ("e"    . "え")     ("o"    . "お")
+    ("ba"   . "ば")     ("bi"   . "び")      ("bu"   . "ぶ")     ("be"   . "べ")     ("bo"   . "ぼ") 
+    ("bya"  . "びゃ")   ("byi"  . "びぃ")    ("byu"  . "びゅ")   ("bye"  . "びぇ")   ("byo"  . "びょ")   
+    ("cha"  . "ちゃ")   ("chi"  . "ち")      ("chu"  . "ちゅ")   ("che"  . "ちぇ")   ("cho"  . "ちょ") 
+    ("cya"  . "ちゃ")   ("cyi"  . "ちぃ")    ("cyu"  . "ちゅ")   ("cye"  . "ちぇ")   ("cyo"  . "ちょ") 
+    ("da"   . "だ")     ("di"   . "ぢ")      ("du"   . "づ")     ("de"   . "で")     ("do"   . "ど") 
+    ("dha"  . "でゃ")   ("dhi"  . "でぃ")    ("dhu"  . "でゅ")   ("dhe"  . "でぇ")   ("dho"  . "でょ")   
+                                                 ("dwu"  . "どぅ")  
+    ("dya"  . "ぢゃ")   ("dyi"  . "ぢぃ")    ("dyu"  . "ぢゅ")   ("dye"  . "ぢぇ")   ("dyo"  . "ぢょ") 
+    ("fa"   . "ふぁ")   ("fi"   . "ふぃ")    ("fu"   . "ふ")     ("fe"   . "ふぇ")   ("fo"   . "ふぉ") 
+    ("fya"  . "ふゃ")   ("fyi"  . "ふぃ")    ("fyu"  . "ふゅ")   ("fye"  . "ふぇ")   ("fyo"  . "ふょ")
+    ("ga"   . "が")     ("gi"   . "ぎ")      ("gu"   . "ぐ")     ("ge"   . "げ")     ("go"   . "ご")
+    ("gwa"  . "ぐゎ")   ("gwi"  . "ぐうぃ")  ("gwu"  . "ぐうぅ") ("gwe" . "ぐうぇ") ("gwo"  . "ぐうぉ")
+    ("gya"  . "ぎゃ")   ("gyi"  . "ぎぃ")    ("gyu"  . "ぎゅ")   ("gye"  . "ぎぇ")   ("gyo"  . "ぎょ") 
+    ("ha"   . "は")     ("hi"   . "ひ")      ("hu"   . "ふ")     ("he"   . "へ")     ("ho"   . "ほ")
+    ("hya"  . "ひゃ")   ("hyi"  . "ひぃ")    ("hyu"  . "ひゅ")   ("hye"  . "ひぇ")   ("hyo"  . "ひょ")
+    ("ja"   . "じゃ")   ("ji"   . "じ")      ("ju"   . "じゅ")   ("je"   . "じぇ")   ("jo"   . "じょ")
+    ("jya"  . "じゃ")   ("jyi"  . "じぃ")    ("jyu"  . "じゅ")   ("jye"  . "じぇ")   ("jyo"  . "じょ")
+    ("ka"   . "か")     ("ki"   . "き")      ("ku"   . "く")     ("ke"   . "け")     ("ko"   . "こ")
+    ("kwa"  . "くゎ")   ("kwi"  . "くうぃ")  ("kwu"  . "くうぅ") ("kwe" . "くうぇ") ("kwo"  . "くうぉ")
+    ("kya"  . "きゃ")   ("kyi"  . "きぃ")    ("kyu"  . "きゅ")   ("kye"  . "きぇ")   ("kyo"  . "きょ")
+    ("la"   . "ぁ")     ("li"   . "ぃ")      ("lu"   . "ぅ")     ("le"   . "ぇ")     ("lo"   . "ぉ")
+    ("lka"  . "ヵ")                                      ("lke" . "ヶ")
+                                                 ("ltsu" . "っ")
+                                                 ("ltu"  . "っ")
     ("lwa"  . "ゎ")
-    ("lya"  . "ゃ")                         ("lyu"  . "ゅ")                        ("lyo"  . "ょ")
-    ("ma"   . "ま")     ("mi"  . "み")      ("mu"   . "む")     ("me"  . "め")     ("mo"   . "も")
-    ("mya"  . "みゃ")   ("myi" . "みぃ")    ("myu"  . "みゅ")   ("mye" . "みぇ")   ("myo"  . "みょ")
+    ("lya"  . "ゃ")                          ("lyu"  . "ゅ")                             ("lyo"  . "ょ")
+    ("ma"   . "ま")     ("mi"   . "み")      ("mu"   . "む")     ("me"   . "め")     ("mo"   . "も")
+    ("mya"  . "みゃ")   ("myi"  . "みぃ")    ("myu"  . "みゅ")   ("mye"  . "みぇ")   ("myo"  . "みょ")
     ("n'"   . "ん")
-    ("na"   . "な")     ("ni"  . "に")      ("nu"   . "ぬ")     ("ne"  . "ね")     ("no"   . "の")
+    ("na"   . "な")     ("ni"   . "に")      ("nu"   . "ぬ")     ("ne"   . "ね")     ("no"   . "の")
     ("nn"   . "ん")
-    ("nya"  . "にゃ")   ("nyi" . "にぃ")    ("nyu"  . "にゅ")   ("nye" . "にぇ")   ("nyo"  . "にょ")
-    ("pa"   . "ぱ")     ("pi"  . "ぴ")      ("pu"   . "ぷ")     ("pe"  . "ぺ")     ("po"   . "ぽ")
-    ("pya"  . "ぴゃ")   ("pyi" . "ぴぃ")    ("pyu"  . "ぴゅ")   ("pye" . "ぴぇ")   ("pyo"  . "ぴょ")
-    ("ra"   . "ら")     ("ri"  . "り")      ("ru"   . "る")     ("re"  . "れ")     ("ro"   . "ろ")
-    ("rya"  . "りゃ")   ("ryi" . "りぃ")    ("ryu"  . "りゅ")   ("rye" . "りぇ")   ("ryo"  . "りょ")
-    ("sa"   . "さ")     ("si"  . "し")      ("su"   . "す")     ("se"  . "せ")     ("so"   . "そ") 
-    ("sha"  . "しゃ")   ("shi" . "し")      ("shu"  . "しゅ")   ("she" . "しぇ")   ("sho"  . "しょ")   
-    ("sya"  . "しゃ")   ("syi" . "しぃ")    ("syu"  . "しゅ")   ("sye" . "しぇ")   ("syo"  . "しょ") 
-    ("ta"   . "た")     ("ti"  . "ち")      ("tu"   . "つ")     ("te"  . "て")     ("to"   . "と")
-    ("tha"  . "てぁ")   ("thi" . "てぃ")    ("thu"  . "てゅ")   ("the" . "てぇ")   ("tho"  . "てょ")   
-    ("tsa"  . "つぁ")   ("tsi" . "つぃ")    ("tsu"  . "つ")     ("tse" . "つぇ")   ("tso"  . "つぉ")
-                                            ("twu"  . "とぅ")
-    ("tya"  . "ちゃ")   ("tyi" . "ちぃ")    ("tyu"  . "ちゅ")   ("tye" . "ちぇ")   ("tyo"  . "ちょ")
-    ("va"   . "う゛ぁ") ("vi"  . "う゛ぃ")  ("vu"   . "う゛")   ("ve"  . "う゛ぇ") ("vo"   . "う゛ぉ")
-    ("vya"  . "う゛ゃ") ("vyi" . "う゛ぃ")  ("vyu"  . "う゛ゅ") ("vye" . "う゛ぇ") ("vyo"  . "う゛ょ")
-    ("wa"   . "わ")     ("wi"  . "うぃ")    ("wu"   . "う")     ("we"  . "うぇ")   ("wo"   . "を")
-    ("wha"  . "ふぁ")   ("whi" . "ふぃ")    ("wyu"  . "ふゅ")   ("whe" . "ふぇ")   ("who"  . "ふぉ")
-    ("xa"   . "ぁ")     ("xi"  . "ぃ")      ("xu"   . "ぅ")     ("xe"  . "ぇ")     ("xo"   . "ぉ")
-    ("xka"  . "ヵ")                                             ("xke" . "ヶ")
-    ("xtsu" . "っ")     ("xtu"  . "っ")     ("xwa"  . "ゎ")
-    ("xwe"  . "ゑ")     ("xwi" . "ゐ")
-    ("xya"  . "ゃ")                         ("xyu" . "ゅ")                         ("xyo"  . "ょ")
-    ("ya"   . "や")                         ("yu"  . "ゆ")      ("ye"  . "いぇ")   ("yo"   . "よ") 
-    ("za"   . "ざ")     ("zi"  . "じ")      ("zu"  . "ず")      ("ze"  . "ぜ")     ("zo"   . "ぞ")
-    ("zya"  . "じゃ")   ("zyi" . "じぃ")    ("zyu" . "じゅ")    ("zye" . "じぇ")   ("zyo"  . "じょ")
+    ("nya"  . "にゃ")   ("nyi"  . "にぃ")    ("nyu"  . "にゅ")   ("nye"  . "にぇ")   ("nyo"  . "にょ")
+    ("pa"   . "ぱ")     ("pi"   . "ぴ")      ("pu"   . "ぷ")     ("pe"   . "ぺ")     ("po"   . "ぽ")
+    ("pya"  . "ぴゃ")   ("pyi"  . "ぴぃ")    ("pyu"  . "ぴゅ")   ("pye"  . "ぴぇ")   ("pyo"  . "ぴょ")
+    ("ra"   . "ら")     ("ri"   . "り")      ("ru"   . "る")     ("re"   . "れ")     ("ro"   . "ろ")
+    ("rya"  . "りゃ")   ("ryi"  . "りぃ")    ("ryu"  . "りゅ")   ("rye"  . "りぇ")   ("ryo"  . "りょ")
+    ("sa"   . "さ")     ("si"   . "し")      ("su"   . "す")     ("se"   . "せ")     ("so"   . "そ") 
+    ("sha"  . "しゃ")   ("shi"  . "し")      ("shu"  . "しゅ")   ("she"  . "しぇ")   ("sho"  . "しょ")   
+    ("sya"  . "しゃ")   ("syi"  . "しぃ")    ("syu"  . "しゅ")   ("sye"  . "しぇ")   ("syo"  . "しょ") 
+    ("ta"   . "た")     ("ti"   . "ち")      ("tu"   . "つ")     ("te"   . "て")     ("to"   . "と")
+    ("tha"  . "てぁ")   ("thi"  . "てぃ")    ("thu"  . "てゅ")   ("the"  . "てぇ")   ("tho"  . "てょ")   
+    ("tsa"  . "つぁ")   ("tsi"  . "つぃ")    ("tsu"  . "つ")     ("tse"  . "つぇ")   ("tso"  . "つぉ")
+                                                 ("twu"  . "とぅ")
+    ("tya"  . "ちゃ")   ("tyi"  . "ちぃ")    ("tyu"  . "ちゅ")   ("tye"  . "ちぇ")   ("tyo"  . "ちょ")
+    ("va"   . "う゛ぁ") ("vi"   . "う゛ぃ")  ("vu"   . "う゛")   ("ve"   . "う゛ぇ") ("vo"   . "う゛ぉ")
+    ("vya"  . "う゛ゃ") ("vyi"  . "う゛ぃ")  ("vyu"  . "う゛ゅ") ("vye"  . "う゛ぇ") ("vyo"  . "う゛ょ")
+    ("wa"   . "わ")     ("wi"   . "うぃ")    ("wu"   . "う")     ("we"   . "うぇ")   ("wo"   . "を")
+    ("wha"  . "ふぁ")   ("whi"  . "ふぃ")    ("wyu"  . "ふゅ")   ("whe"  . "ふぇ")   ("who"  . "ふぉ")
+    ("xa"   . "ぁ")     ("xi"   . "ぃ")      ("xu"   . "ぅ")     ("xe"   . "ぇ")     ("xo"   . "ぉ")
+    ("xka"  . "ヵ")                                      ("xke" . "ヶ")
+    ("xtsu" . "っ")     ("xtu"  . "っ")      ("xwa"  . "ゎ")
+    ("xwe"  . "ゑ")     ("xwi"  . "ゐ")
+    ("xya"  . "ゃ")                          ("xyu"  . "ゅ")                         ("xyo"  . "ょ")
+    ("ya"   . "や")                          ("yu"   . "ゆ")     ("ye"   . "いぇ")   ("yo"   . "よ") 
+    ("za"   . "ざ")     ("zi"   . "じ")      ("zu"   . "ず")     ("ze"   . "ぜ")     ("zo"   . "ぞ")
+    ("zya"  . "じゃ")   ("zyi"  . "じぃ")    ("zyu"  . "じゅ")   ("zye"  . "じぇ")   ("zyo"  . "じょ")
     ("zh" . "←") ("zj" . "↓") ("zk"  . "↑") ("zl" . "→")
     ("zH" . "⇐") ("zJ" . "⇓") ("zK" . "⇑")  ("zL" . "⇒")
     ("z~"  . "〜")
@@ -158,56 +159,35 @@
       (error (message "Failed to save ktn stats file: %s" err)))))
 
 (defun ktn--load-dictionary-data (dict)
+  "ktn辞書（Trie-JSON形式）をロードし、dataスロットに格納する。"
   (let ((path (ktn-dictionary-path dict)))
     (when (and path (file-exists-p path))
       (with-temp-buffer
-        (insert-file-contents (ktn-dictionary-path dict))
+        (insert-file-contents path)
         (setf (ktn-dictionary-data dict)
-              (json-parse-buffer :object-type 'hash-table))
-        (setf (ktn-dictionary-headwords dict)
-              (ktn--extract-headwords (ktn-dictionary-data dict)))))))
-
-(defun ktn--extract-headwords (data)
-  "辞書データ DATA からすべての見出し語を抽出し、ソートして返す。"
-  (let (hlist)
-    (when (hash-table-p data)
-      (dolist (section-key '("okuri_nasi" "okuri_ari"))
-        (when-let* ((section (gethash section-key data))
-                    ((hash-table-p section)))
-          (maphash (lambda (midasi _)
-                     (push midasi hlist))
-                   section))))
-    (sort hlist #'string<)
-    ;; (sort hlist
-    ;;       (lambda (a b)
-    ;;         (let ((len-a (length a))
-    ;;               (len-b (length b)))
-    ;;           (if (= len-a len-b)
-    ;;               (string< a b)
-    ;;             (> len-a len-b)))))
-    ))
+              (json-parse-buffer :object-type 'hash-table))))))
 
 (defun ktn--parse-candidate-items (items)
-  ;; ハッシュテーブルの場合は、代表的なキーから実際のアイテムリスト/ベクターを取り出す
+  "candidates部分のデータ（ハッシュやリスト、ベクター）をパースし、(word . annotation) のリストに正規化する。"
+  ;; items がハッシュテーブルまたはベクターの場合のフォールバック処理
   (when (hash-table-p items)
     (setq items (or (gethash "word" items)
                     (gethash "candidates" items)
                     (gethash "cands" items)
                     items)))
 
-  ;; items をリスト形式に正規化して走査
   (let ((item-list (cond ((vectorp items) (append items nil))
                          ((listp items)   items)
                          (t               (list items))))
         result)
     (dolist (item item-list)
       (cond
-       ;; 1. ハッシュテーブル形式のアイテム ("word" と "annotation" を持つ場合)
+       ;; 1. ktn辞書形式のオブジェクト ("word" と任意で "annotation" を持つハッシュテーブル)
        ((hash-table-p item)
         (when-let* ((word (gethash "word" item)))
           (push (cons word (gethash "annotation" item)) result)))
 
-       ;; 2. 文字列形式のアイテム ("word;annotation" または "word" [属性]など)
+       ;; 2. 文字列形式のアイテム
        ((stringp item)
         (let* ((clean (replace-regexp-in-string "\\[[^]]*\\]" "" item))
                (cand  (if (string-match "^\\([^;]+\\);\\(.*\\)$" clean)
@@ -218,15 +198,33 @@
     (nreverse result)))
 
 (defun ktn-dictionary-search (dict midasi &optional is-okuri)
+  "ktn辞書の `trie_index` または各セクションから MIDASI に一致する候補群を検索する。"
   (when-let* ((data (ktn-dictionary-data dict))
-              ((hash-table-p data))
+              ((hash-table-p data)))
+    (let (raw-cands)
+      ;; 1. trie_index から前方一致（または完全一致）エントリを探索
+      (when-let* ((trie (gethash "trie_index" data))
+                  ((hash-table-p trie))
+                  (entries (gethash midasi trie)))
+        ;; entries は構造体のリスト（またはベクター）: [{"headword": "...", "candidates": [...]}, ...]
+        (let ((entry-list (cond ((vectorp entries) (append entries nil))
+                                ((listp entries)   entries)
+                                (t                 (list entries)))))
+          (dolist (entry entry-list)
+            (when (hash-table-p entry)
+              (let ((hw (gethash "headword" entry))
+                    (cands (gethash "candidates" entry)))
+                (when (string= midasi hw)
+                  (setq raw-cands cands)))))))
 
-              (key       (if is-okuri "okuri_ari" "okuri_nasi"))
-              (section   (gethash key data))
-              (raw-cands (or (and (hash-table-p section)
-                                  (gethash midasi section))
-                             (gethash midasi data))))
-    (ktn--parse-candidate-items raw-cands)))
+      ;; 2. trie_index に見つからない場合は従来の okuri_nasi / okuri_ari からフォールバック検索
+      (unless raw-cands
+        (let* ((key (if is-okuri "okuri_ari" "okuri_nasi"))
+               (section (gethash key data)))
+          (setq raw-cands (or (and (hash-table-p section) (gethash midasi section))
+                              (gethash midasi data)))))
+
+      (ktn--parse-candidate-items raw-cands))))
 
 (defun ktn-search-jisyo-combined (midasi &optional is-okuri)
   (let ((seen (make-hash-table :test 'equal))
@@ -293,7 +291,7 @@
     (append (nreverse stat-candidates) (nreverse system-candidates))))
 
 ;;;
-;;; 見出し語の補完
+;;; 見出し語の補完 (ktn辞書の trie_index を活用)
 ;;;
 
 (defvar-local ktn--completion-cache (make-hash-table :test 'equal))
@@ -313,17 +311,15 @@
 (defun ktn--add-recent-history (midasi)
   "MIDASI を直近履歴の先頭に追加する（重複排除）。"
   (when (and midasi (not (string-empty-p midasi)))
-    ;; 既存に含まれていれば一旦削除して先頭へ持ってくる
     (setq ktn--recent-history (delete midasi ktn--recent-history))
     (push midasi ktn--recent-history)
-    ;; 最大件数を超えたら切り捨てる
     (when (> (length ktn--recent-history) ktn--max-recent-history)
       (setq ktn--recent-history (nbutlast ktn--recent-history (- (length ktn--recent-history) ktn--max-recent-history))))
-    ;; キャッシュをクリアして次回検索時に反映させる
     (when (boundp 'ktn--completion-cache)
       (clrhash ktn--completion-cache))))
 
 (defun ktn--complete-search-headword (prefix)
+  "PREFIX に前方一致する見出し語を、直近履歴・統計データ・ktn辞書の trie_index から収集する。"
   (let ((cached (ktn--get-completion-cache prefix)))
     (if cached
         (copy-sequence cached)
@@ -337,7 +333,6 @@
                             (not (gethash midasi seen)))
                    (puthash midasi t seen)
                    (push midasi recent-results)))
-               ;; ※直近履歴は「追加した順（新しい順）」が逆にならないよう nreverse するかそのまま維持
                (setq recent-results (nreverse recent-results))
 
                ;; 2. 統計・頻度データ (ktn--stats-data)
@@ -350,13 +345,23 @@
                 ktn--stats-data)
                (setq stats-results (sort stats-results #'string<))
 
-               ;; 3. システム・個人辞書 (ktn-dictionaries)
+               ;; 3. システム・個人辞書 (ktn-dictionaries の trie_index を利用)
                (dolist (dict ktn-dictionaries)
-                 (dolist (midasi (or (ktn-dictionary-headwords dict) nil))
-                   (when (and (string-prefix-p prefix midasi)
-                              (not (gethash midasi seen)))
-                     (puthash midasi t seen)
-                     (push midasi system-results))))
+                 (when-let* ((data (ktn-dictionary-data dict))
+                             ((hash-table-p data))
+                             (trie (gethash "trie_index" data))
+                             ((hash-table-p trie))
+                             (entries (gethash prefix trie)))
+                   (let ((entry-list (cond ((vectorp entries) (append entries nil))
+                                           ((listp entries)   entries)
+                                           (t                 (list entries)))))
+                     (dolist (entry entry-list)
+                       (when (hash-table-p entry)
+                         (when-let* ((midasi (gethash "headword" entry)))
+                           (unless (gethash midasi seen)
+                             (puthash midasi t seen)
+                             (push midasi system-results))))))))
+               
                (setq system-results (nreverse system-results))
 
                ;; 4. すべてを結合（直近履歴 → 統計データ → 辞書データの順）
@@ -366,7 +371,7 @@
         result))))
 
 ;;;
-;;; 
+;;; 登録処理
 ;;;
 
 (defun ktn--register-word (midasi word &optional annotation)
