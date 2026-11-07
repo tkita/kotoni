@@ -150,16 +150,6 @@ Each function is called with one argument: BASE-TEXT."
   (setq ktn--normal-roma-buffer "")
   (ktn--state-reset))
 
-(defun ktn--ensure-completion-cands (hw current-input)
-  "Ensure completion candidates are loaded for CURRENT-INPUT."
-  (when (and (not (string-empty-p current-input))
-             (or (null (ktn-headword-completion-cands hw))
-                 (null (ktn-headword-completion-base hw))
-                 (not (string-prefix-p (ktn-headword-completion-base hw) current-input))))
-    (setf (ktn-headword-completion-base hw) current-input
-          (ktn-headword-completion-index hw) 0
-          (ktn-headword-completion-cands hw) (ktn--complete-search-headword current-input))))
-
 (defun ktn--get-current-completion-suffix ()
   (when ktn--current-headword
     (let* ((hw ktn--current-headword)
@@ -374,13 +364,53 @@ Each function is called with one argument: BASE-TEXT."
       (ktn--update-inline-display)
       (ktn--show-candidates-window))))
 
+;;;
+;;; 見出し語の補完
+;;;
+
+(defun ktn--ensure-completion-cands (hw current-input)
+  "CURRENT-INPUT に対する補完候補をロード・維持する。
+前方一致（入力増加）時: 既存の候補リストから高速に絞り込む。
+入力変更・Backspace 時: 必要に応じて再検索または復元を行う。"
+  (let ((base  (ktn-headword-completion-base hw))
+        (cands (ktn-headword-completion-cands hw)))
+    (cond
+     ;; 入力が空の場合はキャッシュを完全クリア
+     ((string-empty-p current-input)
+      (setf (ktn-headword-completion-base hw) nil
+            (ktn-headword-completion-cands hw) nil
+            (ktn-headword-completion-index hw) 0))
+
+     ;; 1. 入力文字が増えた場合（例: base="さ", current-input="さし"）
+     ;; 辞書全体ではなく、既存の cands から前方一致で高速絞り込み
+     ((and base cands (string-prefix-p base current-input))
+      (let ((filtered (cl-remove-if-not
+                       (lambda (cand) (string-prefix-p current-input cand))
+                       cands)))
+        (setf (ktn-headword-completion-base hw) current-input
+              (ktn-headword-completion-cands hw) filtered
+              (ktn-headword-completion-index hw) 0)))
+
+     ;; 2. 初回検索、または Backspace 等で prefix 関係が崩れた場合
+     ;; ※ current-input が base と不一致、または未設定の場合のみ全体検索
+     ((or (null base)
+          (null cands)
+          (not (string-prefix-p base current-input)))
+      (setf (ktn-headword-completion-base hw) current-input
+            (ktn-headword-completion-index hw) 0
+            (ktn-headword-completion-cands hw) (ktn--complete-search-headword current-input))))))
+
 (defun ktn--headword-completion (&optional delta)
   "見出し語入力中の補完処理。DELTA（省略時は 1）に応じてインデックスを前後に巡回させる。"
   (interactive)
   (let ((d (or delta 1)))
+
+    ;; 見出し語の補完は、送り仮名ローマ字が空の場合のみ実行
     (when (and ktn--current-headword
                (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
+
       (let* ((hw ktn--current-headword))
+        ;; 候補確保: 現在のひらがな入力文字列を基に、辞書から補完候補リストを取得（キャッシュ活用）
         (ktn--ensure-completion-cands hw (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))
         (let ((cands (ktn-headword-completion-cands hw)))
           (when (and cands
@@ -649,6 +679,9 @@ Each function is called with one argument: BASE-TEXT."
            (pos (and (markerp (ktn-headword-start-marker hw))
                      (marker-position (ktn-headword-start-marker hw)))))
 
+      ;; 今回の見出し語を直近の確定履歴（MRU）に追加
+      (ktn--add-recent-history midasi)
+
       ;; 統計学習には、句読点を含まない「base-text」を使うため汚染されない
       (when (ktn--mode-p 'converting)
         (let ((cands-hash (gethash midasi ktn--stats-data)))
@@ -664,9 +697,6 @@ Each function is called with one argument: BASE-TEXT."
         (goto-char pos)
         (insert text))
 
-      ;; (when (fboundp #'ktn--hassamu-on-kakutei)
-      ;;   ;; 必要に応じてフック側へ渡すテキストを base-text にするか text にするか調整可能
-      ;;   (ktn--hassamu-on-kakutei base-text)))
       (run-hook-with-args 'ktn-kakutei-hook base-text)
     )))
 

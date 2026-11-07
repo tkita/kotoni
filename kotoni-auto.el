@@ -21,6 +21,7 @@
 (defun kotoni-auto--check-context ()
   "ポイント位置の文脈に応じて、コメントや文字列リテラルの「外」に出たら `ktn-mode` を自動オフにする。"
   (when (and (derived-mode-p 'prog-mode)
+             (not (derived-mode-p 'lisp-interaction-mode))
              ktn-mode
              (not (ktn--in-comment-or-string-p)))
     (ktn-mode -1)

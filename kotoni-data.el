@@ -258,6 +258,10 @@
             (push (list word annot source) system-candidates)))))
     (append (nreverse stat-candidates) (nreverse system-candidates))))
 
+;;;
+;;; 見出し語の補完
+;;;
+
 (defvar-local ktn--completion-cache (make-hash-table :test 'equal))
 
 (defun ktn--get-completion-cache (prefix)
@@ -266,13 +270,68 @@
 (defun ktn--set-completion-cache (prefix value)
   (puthash prefix value ktn--completion-cache))
 
+(defvar ktn--recent-history nil
+  "直近で確定した見出し語の履歴リスト（新しいものが先頭）。")
+
+(defvar ktn--max-recent-history 50
+  "保持する直近履歴の最大件数。")
+
+(defun ktn--add-recent-history (midasi)
+  "MIDASI を直近履歴の先頭に追加する（重複排除）。"
+  (when (and midasi (not (string-empty-p midasi)))
+    ;; 既存に含まれていれば一旦削除して先頭へ持ってくる
+    (setq ktn--recent-history (delete midasi ktn--recent-history))
+    (push midasi ktn--recent-history)
+    ;; 最大件数を超えたら切り捨てる
+    (when (> (length ktn--recent-history) ktn--max-recent-history)
+      (setq ktn--recent-history (nbutlast ktn--recent-history (- (length ktn--recent-history) ktn--max-recent-history))))
+    ;; キャッシュをクリアして次回検索時に反映させる
+    (when (boundp 'ktn--completion-cache)
+      (clrhash ktn--completion-cache))))
+
+;; (defun ktn--complete-search-headword (prefix)
+;;   (let ((cached (ktn--get-completion-cache prefix)))
+;;     (if cached
+;;         (copy-sequence cached)
+;;       (let ((result
+;;              (let ((seen (make-hash-table :test 'equal))
+;;                    stats-results system-results)
+;;                (maphash
+;;                 (lambda (midasi _)
+;;                   (when (and (string-prefix-p prefix midasi)
+;;                              (not (gethash midasi seen)))
+;;                     (puthash midasi t seen)
+;;                     (push midasi stats-results)))
+;;                 ktn--stats-data)
+;;                (setq stats-results (sort stats-results #'string<))
+;;                (dolist (dict ktn-dictionaries)
+;;                  (dolist (midasi (or (ktn-dictionary-headwords dict) nil))
+;;                    (when (and (string-prefix-p prefix midasi)
+;;                               (not (gethash midasi seen)))
+;;                      (puthash midasi t seen)
+;;                      (push midasi system-results))))
+;;                (setq system-results (nreverse system-results))
+;;                (append stats-results system-results))))
+;;         (ktn--set-completion-cache prefix result)
+;;         result))))
 (defun ktn--complete-search-headword (prefix)
   (let ((cached (ktn--get-completion-cache prefix)))
     (if cached
         (copy-sequence cached)
       (let ((result
              (let ((seen (make-hash-table :test 'equal))
-                   stats-results system-results)
+                   recent-results stats-results system-results)
+               
+               ;; 1. 【最優先】直近の確定履歴から前方一致するものを収集
+               (dolist (midasi ktn--recent-history)
+                 (when (and (string-prefix-p prefix midasi)
+                            (not (gethash midasi seen)))
+                   (puthash midasi t seen)
+                   (push midasi recent-results)))
+               ;; ※直近履歴は「追加した順（新しい順）」が逆にならないよう nreverse するかそのまま維持
+               (setq recent-results (nreverse recent-results))
+
+               ;; 2. 統計・頻度データ (ktn--stats-data)
                (maphash
                 (lambda (midasi _)
                   (when (and (string-prefix-p prefix midasi)
@@ -281,6 +340,8 @@
                     (push midasi stats-results)))
                 ktn--stats-data)
                (setq stats-results (sort stats-results #'string<))
+
+               ;; 3. システム・個人辞書 (ktn-dictionaries)
                (dolist (dict ktn-dictionaries)
                  (dolist (midasi (or (ktn-dictionary-headwords dict) nil))
                    (when (and (string-prefix-p prefix midasi)
@@ -288,9 +349,16 @@
                      (puthash midasi t seen)
                      (push midasi system-results))))
                (setq system-results (nreverse system-results))
-               (append stats-results system-results))))
+
+               ;; 4. すべてを結合（直近履歴 → 統計データ → 辞書データの順）
+               (append recent-results stats-results system-results))))
+        
         (ktn--set-completion-cache prefix result)
         result))))
+
+;;;
+;;; 
+;;;
 
 (defun ktn--register-word (midasi word &optional annotation)
   (let* ((clean-word (if annotation (concat word ";" annotation) word))
