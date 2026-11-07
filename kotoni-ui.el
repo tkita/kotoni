@@ -49,6 +49,12 @@
   :type 'string
   :group 'kotoni)
 
+(defcustom ktn-kakutei-hook nil
+  "Hook run when a headword or conversion result is committed (kakutei).
+Each function is called with one argument: BASE-TEXT."
+  :type 'hook
+  :group 'kotoni)
+
 (defcustom ktn-show-candidates-nth-henkan 3
   "何回目の SPC 打鍵で候補一覧を表示するか"
   :type 'integer
@@ -109,6 +115,7 @@
     ((C-m 13 RET return [return]) . ktn-return-key-handler)
     ((SPC 32)                     . ktn-start-henkan)
     ((TAB tab [tab] ?\t)          . ktn-tab-key-handler)
+    ((<backtab> backtab S-TAB)    . ktn-backtab-key-handler)
     ((<prior> prior)              . ktn-prior-page) ; PgUp
     ((<next> next)                . ktn-next-page)) ; PgDn
   "キーイベントディスパッチテーブル。")
@@ -215,18 +222,53 @@
                      (propertize display-str 'face 'ktn-headword-face))
         (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))))
 
+(defun ktn--render-candidate-window (parts total current-page)
+  "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
+  (let* ((buf                  (ktn--get-or-create-candidate-buffer))
+         (win                  (display-buffer buf))
+         (win-width            (if (window-live-p win)
+                                   (window-width win)
+                                 (frame-width)))
+         (page-size            (length ktn-select-keys))
+         (total-pages          (ceiling total (float page-size)))
+         (page-str             (mapconcat (lambda (i)
+                                            (if (= i current-page) "■" "□"))
+                                          (number-sequence 0 (1- total-pages))
+                                          ""))
+         ;; ウィンドウ幅を超える場合は数値表記にフォールバック
+         (max-avail-width      (- win-width 4))
+         (display-page-str     (if (> (string-width page-str) max-avail-width)
+                                   (format "(%d/%d)" (1+ current-page) total-pages)
+                                 page-str))
+         (padding              (max 0 (- win-width (string-width display-page-str) 2)))
+         (right-aligned-page   (concat (make-string padding ?\s) display-page-str))
+         (content              (concat (mapconcat #'identity (nreverse parts) "\n")
+                                       (if (> total page-size)
+                                           (concat "\n" right-aligned-page)
+                                         ""))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert content)))
+    (when (window-live-p win)
+      (with-selected-window win
+        (fit-window-to-buffer win)))))
+
 (defun ktn--show-candidates-window ()
+  "変換候補ウィンドウを表示する。"
   (if (not (ktn--mode-p 'converting))
       (ktn--close-candidate-window)
-    (let* ((hw           ktn--current-headword)
-           (total        (length (ktn-headword-candidates hw)))
-           (page-size    (length ktn-select-keys))
-           (current-page (/ (ktn-headword-candidate-index hw) page-size))
-           (start        (* current-page page-size))
-           (end          (min total (+ start page-size)))
+    (let* ((hw         ktn--current-headword)
+           (candidates (ktn-headword-candidates hw))
+           (total      (length candidates))
+           (page-size  (length ktn-select-keys))
+           (current-idx (ktn-headword-candidate-index hw))
+           (current-page (/ current-idx page-size))
+           (start      (* current-page page-size))
+           (end        (min total (+ start page-size)))
            parts)
       (cl-loop for i from start below end
-               for cand-cell = (nth i (ktn-headword-candidates hw))
+               for cand-cell = (nth i candidates)
                for c-str = (nth 0 cand-cell)
                for annot = (nth 1 cand-cell)
                for source = (nth 2 cand-cell)
@@ -237,18 +279,72 @@
                for key-char = (nth (- i start) ktn-select-keys)
                for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
                for formatted = (concat source-marker " " key-str " " display-str)
-               do (push (if (= i (ktn-headword-candidate-index hw))
+               do (push (if (= i current-idx)
                             (propertize formatted 'face 'ktn-selected-face)
                           formatted) parts))
-      (let* ((buf (ktn--get-or-create-candidate-buffer))
-             (win (display-buffer buf))
-             (win-width (if (window-live-p win) (window-width win) (frame-width)))
-             (page-str (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
-             (padding (max 0 (- win-width (string-width page-str) 2)))
-             (right-aligned-page (concat (make-string padding ?\s) page-str))
-             (content (concat (mapconcat #'identity (nreverse parts) "\n") (if (> total page-size) (concat "\n" right-aligned-page) ""))))
-        (with-current-buffer buf (let ((inhibit-read-only t)) (erase-buffer) (insert content)))
-        (when (window-live-p win) (with-selected-window win (fit-window-to-buffer win)))))))
+      (ktn--render-candidate-window parts total current-page))))
+
+(defun ktn--render-candidate-window (parts total current-page)
+  "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
+  (let* ((buf                  (ktn--get-or-create-candidate-buffer))
+         (win                  (display-buffer buf))
+         (win-width            (if (window-live-p win)
+                                   (window-width win)
+                                 (frame-width)))
+         (page-size            (length ktn-select-keys))
+         (total-pages          (ceiling total (float page-size)))
+         (page-str             (mapconcat (lambda (i)
+                                            (if (= i current-page) "■" "□"))
+                                          (number-sequence 0 (1- total-pages))
+                                          ""))
+         ;; ウィンドウ幅を超える場合は数値表記にフォールバック
+         (max-avail-width      (- win-width 4))
+         (display-page-str     (if (> (string-width page-str) max-avail-width)
+                                   (format "(%d/%d)" (1+ current-page) total-pages)
+                                 page-str))
+         (padding              (max 0 (- win-width (string-width display-page-str) 2)))
+         (right-aligned-page   (concat (make-string padding ?\s) display-page-str))
+         (content              (concat (mapconcat #'identity (nreverse parts) "\n")
+                                       (if (> total page-size)
+                                           (concat "\n" right-aligned-page)
+                                         ""))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert content)))
+    (when (window-live-p win)
+      (with-selected-window win
+        (fit-window-to-buffer win)))))
+
+(defun ktn--show-candidates-window ()
+  "変換候補ウィンドウを表示する。"
+  (if (not (ktn--mode-p 'converting))
+      (ktn--close-candidate-window)
+    (let* ((hw         ktn--current-headword)
+           (candidates (ktn-headword-candidates hw))
+           (total      (length candidates))
+           (page-size  (length ktn-select-keys))
+           (current-idx (ktn-headword-candidate-index hw))
+           (current-page (/ current-idx page-size))
+           (start      (* current-page page-size))
+           (end        (min total (+ start page-size)))
+           parts)
+      (cl-loop for i from start below end
+               for cand-cell = (nth i candidates)
+               for c-str = (nth 0 cand-cell)
+               for annot = (nth 1 cand-cell)
+               for source = (nth 2 cand-cell)
+               for source-marker = (if (eq source 'user) "+" " ")
+               for display-str = (if (and annot (not (string-empty-p annot)))
+                                     (concat c-str ";" annot)
+                                   c-str)
+               for key-char = (nth (- i start) ktn-select-keys)
+               for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
+               for formatted = (concat source-marker " " key-str " " display-str)
+               do (push (if (= i current-idx)
+                            (propertize formatted 'face 'ktn-selected-face)
+                          formatted) parts))
+      (ktn--render-candidate-window parts total current-page))))
 
 (defun ktn--format-completion-candidate (candidate base-string)
   "CANDIDATE のうち BASE-STRING に一致する部分を `ktn-completion-base-face` で、
@@ -265,6 +361,7 @@
       (propertize candidate 'face 'ktn-completion-rest-face))))
 
 (defun ktn--show-completion-window ()
+  "見出し語の TAB 補完候補ウィンドウを表示する。"
   (let* ((hw ktn--current-headword)
          (cands    (and hw (ktn-headword-completion-cands hw)))
          (base-str (and hw (ktn-headword-buffer hw))))
@@ -287,26 +384,7 @@
                               (propertize formatted 'face 'ktn-selected-face)
                             formatted)
                           parts))
-
-        (let* ((buf                 (ktn--get-or-create-candidate-buffer))
-               (win                 (display-buffer buf))
-               (win-width           (if (window-live-p win)
-                                        (window-width win)
-                                      (frame-width)))
-               (page-str            (format "(%d/%dページ)" (1+ current-page) (ceiling total (float page-size))))
-               (padding             (max 0 (- win-width (string-width page-str) 2)))
-               (right-aligned-page  (concat (make-string padding ?\s) page-str))
-               (content             (concat (mapconcat #'identity (nreverse parts) "\n")
-                                            (if (> total page-size)
-                                                (concat "\n" right-aligned-page)
-                                              ""))))
-          (with-current-buffer buf
-            (let ((inhibit-read-only t))
-              (erase-buffer)
-              (insert content)))
-          (when (window-live-p win)
-            (with-selected-window win
-              (fit-window-to-buffer win))))))))
+        (ktn--render-candidate-window parts total current-page)))))
 
 ;;; 前後の候補へ移動する関数
 (defun ktn-previous-candidate ()
@@ -358,44 +436,33 @@
       (ktn--update-inline-display)
       (ktn--show-candidates-window))))
 
-;; 安全なスロット取得・設定用ヘルパー（アクセサのマクロ展開を回避）
-(defun ktn--hw-buffer (hw)
-  (aref hw 2))
-
-(defun ktn--hw-set-buffer (hw val)
-  (setf (aref hw 2) val))
-
-(defun ktn--hw-roma (hw)
-  (aref hw 3))
-
-(defun ktn--hw-set-roma (hw val)
-  (setf (aref hw 3) val))
-
-(defun ktn--headword-completion ()
-  "見出し語入力中のTAB補完処理。"
-  (when (and ktn--current-headword (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
-    (let* ((hw ktn--current-headword))
-      (ktn--ensure-completion-cands hw (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))
-      (let ((cands (ktn-headword-completion-cands hw)))
-        (when (and cands (> (length cands) 0))
-          (let ((tab-count (ktn-headword-completion-tab-count hw)))
-            (cond
-             ((= tab-count 0)
-              (setf (ktn-headword-completion-tab-count hw) 1)
-              (let* ((idx (ktn-headword-completion-index hw))
-                     (chosen (nth idx cands)))
-                (setf (ktn-headword-buffer hw) chosen
-                      (ktn-headword-roma-buffer hw) "")
-                (ktn--update-inline-display)))
-             (t
-              (let* ((idx (ktn-headword-completion-index hw))
-                     (next-idx (mod (1+ idx) (length cands)))
-                     (chosen (nth next-idx cands)))
-                (setf (ktn-headword-completion-index hw) next-idx
-                      (ktn-headword-buffer hw) chosen
-                      (ktn-headword-roma-buffer hw) "")
-                (ktn--update-inline-display)
-                (ktn--show-completion-window))))))))))
+(defun ktn--headword-completion (&optional delta)
+  "見出し語入力中の補完処理。DELTA（省略時は 1）に応じてインデックスを前後に巡回させる。"
+  (interactive)
+  (let ((d (or delta 1)))
+    (when (and ktn--current-headword
+               (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
+      (let* ((hw ktn--current-headword))
+        (ktn--ensure-completion-cands hw (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))
+        (let ((cands (ktn-headword-completion-cands hw)))
+          (when (and cands
+                     (> (length cands) 0))
+            (let* ((total     (length cands))
+                   (tab-count (ktn-headword-completion-tab-count hw))
+                   (idx       (ktn-headword-completion-index hw))
+                   ;; 初回（tab-count == 0）かつ順方向なら現在のインデックス（0）を維持、
+                   ;; それ以外は delta 分だけ進める/戻す
+                   (new-idx (if (and (= tab-count 0)
+                                     (= d 1))
+                                idx
+                              (mod (+ idx d) total)))
+                   (chosen (nth new-idx cands)))
+              (setf (ktn-headword-completion-tab-count hw) 1
+                    (ktn-headword-completion-index hw) new-idx
+                    (ktn-headword-buffer hw) chosen
+                    (ktn-headword-roma-buffer hw) "")
+              (ktn--update-inline-display)
+              (ktn--show-completion-window))))))))
 
 (defun ktn--prompt-dict-registration ()
   (let* ((hw ktn--current-headword)
@@ -409,42 +476,50 @@
                           (local-set-key (kbd "C-g") #'abort-recursive-edit)
                           (local-set-key (kbd "C-c C-c") (lambda () (interactive) (when (active-minibuffer-window) (exit-minibuffer)))))
                       (read-from-minibuffer (format "[辞書登録] '%s' に対する単語を入力 (完了は C-c C-c): " display-label)))))
-    (if (and user-word (not (string-empty-p user-word)))
-        (let ((pos (and (markerp (ktn-headword-start-marker hw)) (marker-position (ktn-headword-start-marker hw)))))
+    (if (and user-word
+             (not (string-empty-p user-word)))
+        (let ((pos (and (markerp (ktn-headword-start-marker hw))
+                        (marker-position (ktn-headword-start-marker hw)))))
           (ktn--register-word midasi user-word)
           (ktn--cleanup-headword)
-          (when pos (goto-char pos) (insert user-word))
+          (when pos
+            (goto-char pos)
+            (insert user-word))
           (message "新しい単語を辞書に登録しました: [%s] -> %s" midasi user-word))
       (ktn-quit))))
-
-(defun ktn--lookup-dispatch (ch)
-  "キーイベント CH にマッチするディスパッチテーブルのエントリを検索。"
-  (cl-find-if (lambda (entry)
-                (let ((keys (car entry)))
-                  (if (listp keys)
-                      (memq ch keys)
-                    (eq ch keys))))
-              ktn-dispatch-table))
 
 (defun ktn-return-key-handler ()
   "RET / C-m 打鍵時の処理"
   (interactive)
-  (if ktn--current-headword
-      (progn
-        (ktn-kakutei)
-        (and ktn-newline-on-enter
-          (newline)))
-    (newline)))
+  (if (not ktn--current-headword)
+      (newline)
+    (ktn-kakutei)
+    (and ktn-newline-on-enter
+         (newline))))
 
 (defun ktn-tab-key-handler ()
   "TAB 打鍵時の処理。"
   (interactive)
   (cond
-   ((and ktn--current-headword (ktn-headword-hassamu-active-p ktn--current-headword))
+   ((and ktn--current-headword
+         (ktn-headword-hassamu-active-p ktn--current-headword))
     (when (fboundp #'ktn--hassamu-accept-current)
       (ktn--hassamu-accept-current)))
+
    ((ktn--mode-p 'headword)
-    (ktn--headword-completion))
+    (ktn--headword-completion 1))
+
+   (t
+    (insert "\t"))))
+
+(defun ktn-backtab-key-handler ()
+  "Shift-TAB / backtab 打鍵時の処理。"
+  (interactive)
+  (cond
+   ((ktn--mode-p 'converting)
+    (ktn-previous-candidate))
+   ((ktn--mode-p 'headword)
+    (ktn--headword-completion -1))
    (t
     (insert "\t"))))
 
@@ -532,6 +607,15 @@
 
 ;;     DictRegister --> Normal : 登録完了 / C-g <br/>[新単語を登録して通常モードへ]
 
+(defun ktn--lookup-dispatch (ch)
+  "キーイベント CH にマッチする `ktn-dispatch-table' のエントリを検索。"
+  (cl-find-if (lambda (entry)
+                (let ((keys (car entry)))
+                  (if (listp keys)
+                      (memq ch keys)
+                    (eq ch keys))))
+              ktn-dispatch-table))
+
 (defun ktn-handle-input ()
   "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
   (interactive)
@@ -614,8 +698,7 @@
                           (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
                         (concat (ktn-headword-buffer hw)
                                 (ktn-headword-roma-buffer hw)
-                                (ktn-headword-okuri-buffer hw)
-                                (ktn-headword-roma-buffer hw))))
+                                (ktn-headword-okuri-buffer hw))))
 
            ;; hw に保持されているペンディング句読点があれば文字列化
            (p-proc (ktn-headword-post-processor hw))
@@ -643,10 +726,11 @@
         (goto-char pos)
         (insert text))
 
-      (when (fboundp #'ktn--hassamu-on-kakutei)
-        ;; 必要に応じてフック側へ渡すテキストを base-text にするか text にするか調整可能
-        (ktn--hassamu-on-kakutei base-text)))
-    ))
+      ;; (when (fboundp #'ktn--hassamu-on-kakutei)
+      ;;   ;; 必要に応じてフック側へ渡すテキストを base-text にするか text にするか調整可能
+      ;;   (ktn--hassamu-on-kakutei base-text)))
+      (run-hook-with-args 'ktn-kakutei-hook base-text)
+    )))
 
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."
@@ -667,18 +751,6 @@
    (t 
     ;; 通常モードでのquit時の処理 (必要に応じて拡張可能)
     (keyboard-quit))))
-
-;;; Keymap & Minor-mode Definition
-(defvar ktn-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map [remap self-insert-command] #'ktn-handle-input)
-
-    (dolist (key '("C-g" "C-h" "C-j" "RET" "C-m" "SPC" "q"
-                   "TAB" "<tab>" "<backtab>" "S-TAB"
-                   "<next>" "<prior>"))
-      (define-key map (kbd key) #'ktn-handle-input))
-    map)
-  "Keymap for `ktn-mode`.")
 
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
@@ -702,6 +774,18 @@
                        '(window-parameters . ((no-other-window . t) (no-delete-other-windows . t)))))
 
     t))
+
+;;; Keymap & Minor-mode Definition
+(defvar ktn-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap self-insert-command] #'ktn-handle-input)
+
+    (dolist (key '("C-g"    "C-h"   "C-j" "RET" "C-m" "SPC" "q"
+                   "TAB"    "<tab>" "<backtab>" "S-TAB"
+                   "<next>" "<prior>"))
+      (define-key map (kbd key) #'ktn-handle-input))
+    map)
+  "Keymap for `ktn-mode`.")
 
 ;;;###autoload
 (define-minor-mode ktn-mode

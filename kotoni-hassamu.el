@@ -92,7 +92,7 @@
                                     'face 'ktn-completion-preview-face)))))))
 
 (defun ktn--hassamu-on-kakutei (confirmed-text)
-  "確定文字列 CONFIRMED-TEXT をキーにリストを前方一致検索し、マッチすればセッションを開始する。"
+  "確定文字列 CONFIRMED-TEXT をキーに `ktn--hassamu-candidates' を前方一致検索し、マッチすればセッションを開始する。"
   (if (not ktn--hassamu-candidates)
       (ktn--hassamu-abort)
     (let ((matches (cl-remove-if-not (lambda (item)
@@ -100,16 +100,15 @@
                                     ktn--hassamu-candidates)))
       (if (not matches)
           (ktn--hassamu-abort)
-        (progn
-          (when ktn--current-headword
-            (let ((hw ktn--current-headword))
-              (setf (ktn-headword-hassamu-active-p hw) t
-                    (ktn-headword-hassamu-current-matches hw) matches
-                    (ktn-headword-confirmed-text hw) confirmed-text
-                    (ktn-headword-hassamu-start-marker hw)
-                    (set-marker (or (ktn-headword-hassamu-start-marker hw) (make-marker))
-                                (point)))
-              (ktn--hassamu-update-display))))))))
+        (when ktn--current-headword
+          (let ((hw ktn--current-headword))
+            (setf (ktn-headword-hassamu-active-p hw)        t
+                  (ktn-headword-hassamu-current-matches hw) matches
+                  (ktn-headword-confirmed-text hw)          confirmed-text
+                  (ktn-headword-hassamu-start-marker hw)    (set-marker (or (ktn-headword-hassamu-start-marker hw)
+                                                                            (make-marker))
+                                                                        (point)))
+            (ktn--hassamu-update-display)))))))
 
 (defun ktn--hassamu-abort ()
   "ktn-hassamu のセッションを強制終了し、プレビューとマーカーを片付ける。"
@@ -124,5 +123,6 @@
         (setf (ktn-headword-hassamu-start-marker hw) nil))
       (ktn--hassamu-update-display))))
 
+(add-hook 'ktn-kakutei-hook #'ktn--hassamu-on-kakutei)
 (provide 'kotoni-hassamu)
 ;;; kotoni-hassamu.el ends here

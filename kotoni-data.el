@@ -168,7 +168,7 @@
               (ktn--extract-headwords (ktn-dictionary-data dict)))))))
 
 (defun ktn--extract-headwords (data)
-  (let ((hlist '()))
+  (let (hlist)
     (when (hash-table-p data)
       (dolist (section-key '("okuri_nasi" "okuri_ari"))
         (let ((section (gethash section-key data)))
@@ -273,7 +273,8 @@
 
     ;; 2. システム辞書から検索
     (dolist (dict ktn-dictionaries)
-      (dolist (midasi (or (ktn-dictionary-headwords dict) '()))
+      (dolist (midasi (or (ktn-dictionary-headwords dict)
+                          nil))
         (when (and (string-prefix-p prefix midasi)
                    (not (gethash midasi seen)))
           (puthash midasi t seen)

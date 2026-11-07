@@ -162,8 +162,8 @@
     (?\. . (lambda (hw) (ktn--handle-punctuation-trigger hw ".")))
     (?q  . (lambda (hw)
              ;; qキー: カタカナに即時変換してバッファへ挿入・終了
-             (let* ((raw-buf (ktn--hw-buffer hw))
-                    (raw-roma (ktn--hw-roma hw))
+             (let* ((raw-buf (ktn-headword-buffer hw))
+                    (raw-roma (ktn-headword-roma-buffer hw))
                     (combined (concat raw-buf raw-roma)))
                (when (string-suffix-p "n" combined)
                  (setq combined (concat (substring combined 0 -1) "ん")))
