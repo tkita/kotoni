@@ -244,55 +244,59 @@
      )))
 
 (defconst ktn-converting-action-table
-  `((,#'(lambda (ch-int _ch) (ktn--upper-case-p ch-int))
-     . (lambda (ch-int lower-ch _hw)
-         ;; 大文字: 現在の変換を確定し、新たな Headword を開始
-         (ktn-kakutei)
-         (ktn--start-headword-mode)
-         (let* ((char-str (ktn--safe-char-to-string lower-ch))
-                (res (ktn--process-roma-input "" char-str)))
-           (setf (ktn-headword-buffer ktn--current-headword) (car res)
-                 (ktn-headword-roma-buffer ktn--current-headword) (cdr res))
-           (ktn--update-inline-display))))
+  `(
+    ;; 大文字: 現在の変換を確定し、新たな Headword を開始
+    (,#'(lambda (ch-int _ch) (ktn--upper-case-p ch-int))
+     . ,#'(lambda (ch-int lower-ch _hw)
+            (ktn-kakutei)
+            (ktn--start-headword-mode)
+            (let* ((char-str (ktn--safe-char-to-string lower-ch))
+                   (res (ktn--process-roma-input "" char-str)))
+              (setf (ktn-headword-buffer ktn--current-headword) (car res)
+                    (ktn-headword-roma-buffer ktn--current-headword) (cdr res))
+              (ktn--update-inline-display))))
 
+    ;; 'x': 前候補選択
     (,#'(lambda (ch-int ch) (or (= ch-int ?x) (eq ch 'x)))
-     . (lambda (_ch-int _lower-ch _hw)
-         ;; 'x': 前候補選択
-         (when (fboundp 'ktn-previous-candidate)
-           (ktn-previous-candidate))))
+     . ,#'(lambda (_ch-int _lower-ch _hw)
+            (when (fboundp 'ktn-previous-candidate)
+              (ktn-previous-candidate))))
 
+    ;; 数字キー: 該当候補の選択・確定
     (,#'(lambda (ch-int _ch) (ktn--number-key-p ch-int))
-     . (lambda (ch-int _lower-ch _hw)
-         ;; 数字キー: 該当候補の選択・確定
-         (let ((index (- ch-int ?1)))
-           (ktn-select-nth-candidate index))
-         (ktn-kakutei)))
+     . ,#'(lambda (ch-int _lower-ch _hw)
+            (let ((index (- ch-int ?1)))
+              (ktn-select-nth-candidate index))
+            (ktn-kakutei)))
 
+    ;; 小文字アルファベット: 確定して通常文字として挿入
     (,#'(lambda (ch-int _ch) (ktn--lower-case-p ch-int))
-     . (lambda (_ch-int lower-ch _hw)
-         ;; 小文字アルファベット: 確定して通常文字として挿入
-         (ktn-kakutei)
-         (let ((last-command-event lower-ch))
-           (ktn--handle-normal-mode last-command-event)))))
+     . ,#'(lambda (_ch-int lower-ch _hw)
+            (ktn-kakutei)
+            (let ((last-command-event lower-ch))
+              (ktn--handle-normal-mode last-command-event)))))
   "変換モード中におけるキーアクションのディスパッチテーブル。")
 
 (defun ktn--handle-converting-mode (ch)
   "▼時の入力処理（テーブル駆動化版）。"
   (when ktn--current-headword
-    (let* ((hw       ktn--current-headword)
-           (ch-int   (ktn--to-char-int ch))
-           (is-upper (ktn--upper-case-p ch-int))
-           (lower-ch (if is-upper (+ ch-int 32) ch-int))
-           ;; テーブルから条件に一致するアクションを探索
-           (matched-action
-            (catch 'found
-              (dolist (entry ktn-converting-action-table)
-                (when (funcall (car entry) ch-int ch)
-                  (throw 'found (cdr entry)))))))
+    (ktn--handle-converting-mode-internal ch)))
 
-      (if matched-action
-          (funcall matched-action ch-int lower-ch hw)
-        nil))))
+(defun ktn--handle-converting-mode (ch)
+  (let* ((hw       ktn--current-headword)
+         (ch-int   (ktn--to-char-int ch))
+         (is-upper (ktn--upper-case-p ch-int))
+         (lower-ch (if is-upper (+ ch-int 32) ch-int))
+         ;; テーブルから条件に一致するアクションを探索
+         (matched-action
+          (catch 'found
+            (dolist (entry ktn-converting-action-table)
+              (when (funcall (car entry) ch-int ch)
+                (throw 'found (cdr entry)))))))
+
+    (if matched-action
+        (funcall matched-action ch-int lower-ch hw)
+      nil)))
 
 (defun ktn--hiragana-to-katakana (str)
   "ひらがな文字列 STR をカタカナに変換する。"

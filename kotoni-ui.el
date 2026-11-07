@@ -136,8 +136,8 @@ Each function is called with one argument: BASE-TEXT."
   (get-buffer-create ktn-candidate-buffer-name))
 
 (defun ktn--close-candidate-window ()
-  (let ((buf (get-buffer ktn-candidate-buffer-name)))
-    (when buf (delete-windows-on buf))))
+  (when-let* ((buf (get-buffer ktn-candidate-buffer-name)))
+    (delete-windows-on buf)))
 
 (defun ktn--cleanup-headword ()
   (when ktn--current-headword
@@ -149,24 +149,6 @@ Each function is called with one argument: BASE-TEXT."
   (ktn--close-candidate-window)
   (setq ktn--normal-roma-buffer "")
   (ktn--state-reset))
-
-(defun ktn--get-current-completion-suffix ()
-  (when ktn--current-headword
-    (let* ((hw ktn--current-headword)
-           (current-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-                                  (unless (string-empty-p (ktn-headword-okuri-roma-first hw))
-                                    "*")
-                                  (ktn-headword-okuri-buffer hw)
-                                  (ktn-headword-okuri-roma-buffer hw))))
-      (when (and (ktn--mode-p 'headword)
-                 (string-empty-p (ktn-headword-okuri-roma-first hw))
-                 (not (string-empty-p current-input)))
-        (ktn--ensure-completion-cands hw current-input)
-        (when (ktn-headword-completion-cands hw)
-          (let ((first-cand (nth (ktn-headword-completion-index hw) (ktn-headword-completion-cands hw))))
-            (when (and first-cand
-                       (string-prefix-p current-input first-cand))
-              (substring first-cand (length current-input)))))))))
 
 (defun ktn--update-inline-display ()
   (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
@@ -181,6 +163,7 @@ Each function is called with one argument: BASE-TEXT."
       (let ((pos (point)))
         (setf (ktn-headword-headword-overlay ktn--current-headword) (make-overlay pos pos nil t t))))
     (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))
+
     (cond
      ((ktn--mode-p 'headword)
       (let* ((hw ktn--current-headword)
@@ -188,7 +171,8 @@ Each function is called with one argument: BASE-TEXT."
                                 (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
                                 (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
              (display-headword (concat "▽" input-str))
-             (_ (ktn--ensure-completion-cands hw input-str))
+             (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
+                  (ktn--ensure-completion-cands hw input-str)))
              (preview-suffix (ktn--get-current-completion-suffix)))
         (if (and preview-suffix
                  (not (string-empty-p preview-suffix)))
@@ -200,6 +184,7 @@ Each function is called with one argument: BASE-TEXT."
           (overlay-put (ktn-headword-headword-overlay hw) 'before-string
                        (propertize display-headword 'face 'ktn-headword-face))
           (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
+
      ((ktn--mode-p 'converting)
       (let* ((hw ktn--current-headword)
              (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
@@ -210,7 +195,8 @@ Each function is called with one argument: BASE-TEXT."
              (display-str (concat "▼" cand-str)))
         (overlay-put (ktn-headword-headword-overlay hw) 'before-string
                      (propertize display-str 'face 'ktn-headword-face))
-        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))))
+        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))
+     )))
 
 (defun ktn--render-candidate-window (parts total current-page)
   "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
@@ -274,46 +260,6 @@ Each function is called with one argument: BASE-TEXT."
                           formatted) parts))
       (ktn--render-candidate-window parts total current-page))))
 
-(defun ktn--format-completion-candidate (candidate base-string)
-  "CANDIDATE のうち BASE-STRING に一致する部分を `ktn-completion-base-face` で、
-残りの部分を `ktn-completion-rest-face` で装飾して返す。"
-  (let* ((base     (or base-string ""))
-         (base-len (length base)))
-    (if (and (>  base-len 0)
-             (<= base-len (length candidate))
-             (string-prefix-p base base-string))
-        (concat
-         (propertize (substring candidate 0 base-len) 'face 'ktn-completion-base-face)
-         (propertize (substring candidate base-len)   'face 'ktn-completion-rest-face))
-      ;; 一致しない場合は全体を rest-face またはデフォルトにする
-      (propertize candidate 'face 'ktn-completion-rest-face))))
-
-(defun ktn--show-completion-window ()
-  "見出し語の TAB 補完候補ウィンドウを表示する。"
-  (let* ((hw ktn--current-headword)
-         (cands    (and hw (ktn-headword-completion-cands hw)))
-         (base-str (and hw (ktn-headword-buffer hw))))
-    (if (not cands)
-        (ktn--close-candidate-window)
-      (let* ((total        (length cands))
-             (page-size    (length ktn-select-keys))
-             (current-idx  (ktn-headword-completion-index hw))
-             (current-page (/ current-idx page-size))
-             (start        (* current-page page-size))
-             (end          (min total (+ start page-size)))
-             parts)
-        (cl-loop for i from start below end
-                 for cand = (nth i cands)
-                 for key-char = (nth (- i start) ktn-select-keys)
-                 for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
-                 for formatted-cand = (ktn--format-completion-candidate cand base-str)
-                 for formatted = (concat "    " key-str " " formatted-cand)
-                 do (push (if (= i current-idx)
-                              (propertize formatted 'face 'ktn-selected-face)
-                            formatted)
-                          parts))
-        (ktn--render-candidate-window parts total current-page)))))
-
 ;;; 前後の候補へ移動する関数
 (defun ktn-previous-candidate ()
   "Move to the previous conversion candidate."
@@ -368,6 +314,64 @@ Each function is called with one argument: BASE-TEXT."
 ;;; 見出し語の補完
 ;;;
 
+(defun ktn--format-completion-candidate (candidate base-string)
+  "CANDIDATE のうち BASE-STRING に一致する部分を `ktn-completion-base-face` で、
+残りの部分を `ktn-completion-rest-face` で装飾して返す。"
+  (let* ((base (or base-string ""))
+         (base-len (length base)))
+    (if (and (> base-len 0)
+             (<= base-len (length candidate))
+             (string-prefix-p base candidate))  ;; 修正: base-string ではなく candidate と比較
+        (concat
+         (propertize (substring candidate 0 base-len) 'face 'ktn-completion-base-face)
+         (propertize (substring candidate base-len)   'face 'ktn-completion-rest-face))
+      (propertize candidate 'face 'ktn-completion-rest-face))))
+
+(defun ktn--show-completion-window ()
+  "見出し語の TAB 補完候補ウィンドウを表示する。"
+  (let* ((hw ktn--current-headword)
+         (cands    (and hw (ktn-headword-completion-cands hw)))
+         ;; ▽ バッファではなく、保持している completion-base を確実に使う
+         (base-str (and hw (ktn-headword-completion-base hw))))
+    (if (not cands)
+        (ktn--close-candidate-window)
+      (let* ((total        (length cands))
+             (page-size    (length ktn-select-keys))
+             (current-idx  (ktn-headword-completion-index hw))
+             (current-page (/ current-idx page-size))
+             (start        (* current-page page-size))
+             (end          (min total (+ start page-size)))
+             parts)
+        (cl-loop for i from start below end
+                 for cand = (nth i cands)
+                 for key-char = (nth (- i start) ktn-select-keys)
+                 for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
+                 for formatted-cand = (ktn--format-completion-candidate cand base-str)
+                 for formatted = (concat "    " key-str " " formatted-cand)
+                 do (push (if (= i current-idx)
+                              (propertize formatted 'face 'ktn-selected-face)
+                            formatted)
+                          parts))
+        (ktn--render-candidate-window parts total current-page)))))
+
+(defun ktn--get-current-completion-suffix ()
+  (when-let* ((hw ktn--current-headword)
+              (current-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
+                                     (unless (string-empty-p (ktn-headword-okuri-roma-first hw))
+                                       "*")
+                                     (ktn-headword-okuri-buffer hw)
+                                     (ktn-headword-okuri-roma-buffer hw)))
+              ((ktn--mode-p 'headword))
+              ((string-empty-p (ktn-headword-okuri-roma-first hw)))
+              ((not (string-empty-p current-input))))
+    ;; ▼ TAB巡回中（tab-count > 0）は勝手な再絞り込みをしない
+    (unless (> (ktn-headword-completion-tab-count hw) 0)
+      (ktn--ensure-completion-cands hw current-input))
+    (when-let* ((cands (ktn-headword-completion-cands hw))
+                (first-cand (nth (ktn-headword-completion-index hw) cands))
+                ((string-prefix-p current-input first-cand)))
+      (substring first-cand (length current-input)))))
+
 (defun ktn--ensure-completion-cands (hw current-input)
   "CURRENT-INPUT に対する補完候補をロード・維持する。
 前方一致（入力増加）時: 既存の候補リストから高速に絞り込む。
@@ -409,12 +413,19 @@ Each function is called with one argument: BASE-TEXT."
     (when (and ktn--current-headword
                (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
 
-      (let* ((hw ktn--current-headword))
-        ;; 候補確保: 現在のひらがな入力文字列を基に、辞書から補完候補リストを取得（キャッシュ活用）
-        (ktn--ensure-completion-cands hw (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))
+      (let* ((hw ktn--current-headword)
+             ;; 初回 TAB 押下時の入力文字列（例: "とうきょう"）をベースとして取得
+             (raw-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))))
+        
+        ;; まだ completion-base が設定されていない（＝初回の TAB）場合のみ、
+        ;; 現在の入力をベースとしてロックし、全候補リストを一度だけ取得する
+        (unless (ktn-headword-completion-base hw)
+          (setf (ktn-headword-completion-base hw) raw-input
+                (ktn-headword-completion-cands hw) (ktn--complete-search-headword raw-input)
+                (ktn-headword-completion-index hw) 0))
+
         (let ((cands (ktn-headword-completion-cands hw)))
-          (when (and cands
-                     (> (length cands) 0))
+          (when (and cands (> (length cands) 0))
             (let* ((total     (length cands))
                    (tab-count (ktn-headword-completion-tab-count hw))
                    (idx       (ktn-headword-completion-index hw))
@@ -425,12 +436,22 @@ Each function is called with one argument: BASE-TEXT."
                                 idx
                               (mod (+ idx d) total)))
                    (chosen (nth new-idx cands)))
-              (setf (ktn-headword-completion-tab-count hw) 1
+              
+              ;; 状態を更新（completion-base や completion-cands は上書きせず維持する）
+              (setf (ktn-headword-completion-tab-count hw) (1+ tab-count)
                     (ktn-headword-completion-index hw) new-idx
                     (ktn-headword-buffer hw) chosen
                     (ktn-headword-roma-buffer hw) "")
+              
               (ktn--update-inline-display)
-              (ktn--show-completion-window))))))))
+
+              ;; TAB(2) 以降（tab-count が 1 以上）のとき、別ウィンドウに全候補一覧を表示する
+              (when (> (ktn-headword-completion-tab-count hw) 1)
+                (ktn--show-completion-window)))))))))
+
+;;;
+;;;
+;;;
 
 (defun ktn--prompt-dict-registration ()
   (let* ((hw ktn--current-headword)
@@ -440,9 +461,12 @@ Each function is called with one argument: BASE-TEXT."
                    (ktn-headword-buffer hw)))
          (display-label (concat (ktn-headword-buffer hw) (ktn-headword-okuri-buffer hw)))
          (user-word (minibuffer-with-setup-hook
-                        (lambda ()
-                          (local-set-key (kbd "C-g") #'abort-recursive-edit)
-                          (local-set-key (kbd "C-c C-c") (lambda () (interactive) (when (active-minibuffer-window) (exit-minibuffer)))))
+                        #'(lambda ()
+                            (local-set-key (kbd "C-g") #'abort-recursive-edit)
+                            (local-set-key (kbd "C-c C-c") #'(lambda ()
+                                                               (interactive)
+                                                               (when (active-minibuffer-window)
+                                                                 (exit-minibuffer)))))
                       (read-from-minibuffer (format "[辞書登録] '%s' に対する単語を入力 (完了は C-c C-c): " display-label)))))
     (if (and user-word
              (not (string-empty-p user-word)))
@@ -499,6 +523,12 @@ Each function is called with one argument: BASE-TEXT."
     (ktn-quit))
    ((ktn--mode-p 'headword)
     (let ((hw ktn--current-headword))
+      (when (or (> (ktn-headword-completion-tab-count hw) 0)
+                (get-buffer ktn-candidate-buffer-name))
+        (ktn--close-candidate-window)
+        (setf (ktn-headword-completion-tab-count hw) 0
+              (ktn-headword-completion-index hw) 0))
+
       (cond
        ((not (string-empty-p (ktn-headword-roma-buffer hw)))
         (let ((roma (ktn-headword-roma-buffer hw)))
@@ -656,49 +686,52 @@ Each function is called with one argument: BASE-TEXT."
   "Commit current headword or conversion result and insert into buffer."
   (interactive)
   (when ktn--current-headword
-    (let* ((hw ktn--current-headword)
-           (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
-                       (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
-                     (ktn-headword-buffer hw)))
+    (ktn--kakutei-internal)))
 
-           ;; 候補や入力から得られる純粋な確定テキスト
-           (base-text (if (ktn--mode-p 'converting)
-                          (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
-                        (concat (ktn-headword-buffer hw)
-                                (ktn-headword-roma-buffer hw)
-                                (ktn-headword-okuri-buffer hw))))
+(defun ktn--kakutei-internal ()
+  (let* ((hw ktn--current-headword)
+         (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
+                     (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
+                   (ktn-headword-buffer hw)))
 
-           ;; hw に保持されているペンディング句読点があれば文字列化
-           (p-proc (ktn-headword-post-processor hw))
+         ;; 候補や入力から得られる純粋な確定テキスト
+         (base-text (if (ktn--mode-p 'converting)
+                        (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
+                      (concat (ktn-headword-buffer hw)
+                              (ktn-headword-roma-buffer hw)
+                              (ktn-headword-okuri-buffer hw))))
 
-           ;; バッファ挿入用のフルテキスト（句読点込み）
-           (text (if (functionp p-proc)
-                     (funcall p-proc base-text)
-                   base-text))
+         ;; hw に保持されているペンディング句読点があれば文字列化
+         (p-proc (ktn-headword-post-processor hw))
 
-           (pos (and (markerp (ktn-headword-start-marker hw))
-                     (marker-position (ktn-headword-start-marker hw)))))
+         ;; バッファ挿入用のフルテキスト（句読点込み）
+         (text (if (functionp p-proc)
+                   (funcall p-proc base-text)
+                 base-text))
 
-      ;; 今回の見出し語を直近の確定履歴（MRU）に追加
-      (ktn--add-recent-history midasi)
+         (pos (and (markerp (ktn-headword-start-marker hw))
+                   (marker-position (ktn-headword-start-marker hw)))))
 
-      ;; 統計学習には、句読点を含まない「base-text」を使うため汚染されない
-      (when (ktn--mode-p 'converting)
-        (let ((cands-hash (gethash midasi ktn--stats-data)))
-          (unless cands-hash
-            (setq cands-hash (make-hash-table :test 'equal))
-            (puthash midasi cands-hash ktn--stats-data))
-          (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
-          (ktn-save-stats)))
+    ;; 今回の見出し語を直近の確定履歴（MRU）に追加
+    (ktn--add-recent-history midasi)
 
-      (setf (ktn-headword-post-processor hw) nil)
-      (ktn--cleanup-headword)
-      (when pos
-        (goto-char pos)
-        (insert text))
+    ;; 統計学習には、句読点を含まない「base-text」を使うため汚染されない
+    (when (ktn--mode-p 'converting)
+      (let ((cands-hash (gethash midasi ktn--stats-data)))
+        (unless cands-hash
+          (setq cands-hash (make-hash-table :test 'equal))
+          (puthash midasi cands-hash ktn--stats-data))
+        (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
+        (ktn-save-stats)))
 
-      (run-hook-with-args 'ktn-kakutei-hook base-text)
-    )))
+    (setf (ktn-headword-post-processor hw) nil)
+    (ktn--cleanup-headword)
+    (when pos
+      (goto-char pos)
+      (insert text))
+
+    (run-hook-with-args 'ktn-kakutei-hook base-text)
+    ))
 
 (defun ktn-quit ()
   "Cancel current input sequence or return from converting to headword mode."
