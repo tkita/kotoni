@@ -158,10 +158,10 @@
       (concat open-str base close-str)))
 
 (defconst ktn-headword-action-table
-  `((?,  . (lambda (hw) (ktn--handle-punctuation-trigger hw ",")))
+  `((?\, . (lambda (hw) (ktn--handle-punctuation-trigger hw ",")))
     (?\. . (lambda (hw) (ktn--handle-punctuation-trigger hw ".")))
-    (?q  . (lambda (hw)
-             ;; qキー: カタカナに即時変換してバッファへ挿入・終了
+    (?\? . (lambda (hw) (ktn--handle-punctuation-trigger hw "?")))
+    (?\q . (lambda (hw)                 ; qキー: カタカナに即時変換
              (let* ((raw-buf (ktn-headword-buffer hw))
                     (raw-roma (ktn-headword-roma-buffer hw))
                     (combined (concat raw-buf raw-roma)))
@@ -177,7 +177,7 @@
              (ktn-start-henkan)))
 
     ;; 将来的に絵文字や記号を追加したくなったらここに1行足すだけ！
-    ;; (?! . (lambda (hw) ...))
+    ;; (?\! . (lambda (hw) ...))
     )
   "見出し語モード中における特殊キーとアクションの定義テーブル。")
 
