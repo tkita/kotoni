@@ -28,29 +28,34 @@
 
 (defun skk2json--skip-entry-p (line headword)
   "見出し語 HEADWORD の先頭1文字が ASCII 文字（英字・数字・記号など）であるか判定する。"
+  ;; kotoni では、▽での ASCII 入力はサポートしない。そのため、辞書でも、ASCII 見出し語は不要
   (cond
-   ;; 2. 行頭が ';' OR '>' OR '#' で始まる行
+   ;; コメント行・メタ行（;, >, # で始まる行）をスキップ
    ((or (string-prefix-p ";" line)
         (string-prefix-p ">" line)
         (string-prefix-p "#" line))
     t)
-   ;; 1. 見出し語のすべてが ASCII で構成されている場合
-   ((string-match-p "\\`[[:ascii:]]+\\'" headword)
+
+   ;; 先頭が ASCII 文字で始まる見出し語をスキップ（「ASCII+ひらがな」もスキップ）
+   ((string-match-p "\\`[[:ascii:]]" headword)
     t)
-   ;; 3. 見出し語の末尾が '>' である場合
+
+   ;; 見出し語の末尾が '>' であるものをスキップ
    ((string-suffix-p ">" headword)
     t)
-   ;;
+
+   ;; 見出し語に '#' が含まれるものをスキップ（数値変換用エントリなど）
    ((string-match-p "#" headword)
     t)
-   ;;
+
+   ;; 結果、ひらがな単体や「ひらがな+ASCII」（送りありエントリ）は保持
    (t
     nil)))
 
 (defun skk2json--union-candidates (existing new-cands)
   "既存の候補リストと新しい候補リストを結合し、順序を維持したまま重複を排除する。"
   (let ((seen   (make-hash-table :test 'equal))
-        (result nil))
+        result)
     (dolist (c (append existing new-cands))
       (unless (gethash c seen)
         (puthash c t seen)

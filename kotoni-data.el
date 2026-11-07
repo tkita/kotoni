@@ -258,30 +258,39 @@
             (push (list word annot source) system-candidates)))))
     (append (nreverse stat-candidates) (nreverse system-candidates))))
 
+(defvar-local ktn--completion-cache (make-hash-table :test 'equal))
+
+(defun ktn--get-completion-cache (prefix)
+  (gethash prefix ktn--completion-cache))
+
+(defun ktn--set-completion-cache (prefix value)
+  (puthash prefix value ktn--completion-cache))
+
 (defun ktn--complete-search-headword (prefix)
-  (let ((seen (make-hash-table :test 'equal))
-        stats-results system-results)
-
-    ;; 1. ユーザー統計データから検索
-    (maphash (lambda (midasi _)
-               (when (and (string-prefix-p prefix midasi)
-                          (not (gethash midasi seen)))
-                 (puthash midasi t seen)
-                 (push midasi stats-results)))
-             ktn--stats-data)
-    (setq stats-results (sort stats-results #'string<))
-
-    ;; 2. システム辞書から検索
-    (dolist (dict ktn-dictionaries)
-      (dolist (midasi (or (ktn-dictionary-headwords dict)
-                          nil))
-        (when (and (string-prefix-p prefix midasi)
-                   (not (gethash midasi seen)))
-          (puthash midasi t seen)
-          (push midasi system-results))))
-    (setq system-results (nreverse system-results))
-
-    (append stats-results system-results)))
+  (let ((cached (ktn--get-completion-cache prefix)))
+    (if cached
+        (copy-sequence cached)
+      (let ((result
+             (let ((seen (make-hash-table :test 'equal))
+                   stats-results system-results)
+               (maphash
+                (lambda (midasi _)
+                  (when (and (string-prefix-p prefix midasi)
+                             (not (gethash midasi seen)))
+                    (puthash midasi t seen)
+                    (push midasi stats-results)))
+                ktn--stats-data)
+               (setq stats-results (sort stats-results #'string<))
+               (dolist (dict ktn-dictionaries)
+                 (dolist (midasi (or (ktn-dictionary-headwords dict) nil))
+                   (when (and (string-prefix-p prefix midasi)
+                              (not (gethash midasi seen)))
+                     (puthash midasi t seen)
+                     (push midasi system-results))))
+               (setq system-results (nreverse system-results))
+               (append stats-results system-results))))
+        (ktn--set-completion-cache prefix result)
+        result))))
 
 (defun ktn--register-word (midasi word &optional annotation)
   (let* ((clean-word (if annotation (concat word ";" annotation) word))

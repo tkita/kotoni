@@ -48,6 +48,37 @@
 (require 'kotoni-ui)
 (require 'kotoni-hassamu)
 
+
+;;; Keymap & Minor-mode Definition
+
+(defvar ktn-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap self-insert-command] #'ktn-handle-input)
+
+    (dolist (key '("C-g"    "C-h"   "C-j" "RET" "C-m" "SPC" "q"
+                   "TAB"    "<tab>" "<backtab>" "S-TAB"
+                   "<next>" "<prior>"))
+      (define-key map (kbd key) #'ktn-handle-input))
+    map)
+  "Keymap for `ktn-mode`.")
+
+;;;###autoload
+(define-minor-mode ktn-mode
+  "Toggle Ktn mode."
+  :lighter ktn-lighter
+  :global nil
+  :keymap ktn-mode-map
+  (if ktn-mode
+      (progn (ktn-setup)
+             (ktn--set-cursor-red))
+    (ktn--state-reset)
+    (ktn--unset-cursor-red)
+    (ktn--cleanup-headword))
+  (setq ktn-lighter (if ktn-mode
+                        ktn-indicator
+                      ""))
+  (force-mode-line-update))
+
 ;;;###autoload
 (defalias 'kotoni-mode 'ktn-mode)
 

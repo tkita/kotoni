@@ -34,7 +34,7 @@
   (completion-base       nil)           ; 補完基準テキスト
   (completion-tab-count  0)             ; TAB連打カウント
   (headword-overlay      nil)           ; オーバーレイ参照
-  (post-processor        "")            ; 確定後の後処理(句読点など)
+  (post-processor        nil)            ; 確定後の後処理(句読点など)
 
   ;; hassamu 連携用フィールド
   (hassamu-active-p        nil)

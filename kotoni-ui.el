@@ -63,7 +63,7 @@ Each function is called with one argument: BASE-TEXT."
 (defcustom ktn-newline-on-enter t
   "非nilの場合、変換確定時の RET キー打鍵による改行を抑制する。"
   :type 'boolean
-  :group 'ktn)
+  :group 'kotoni)
 
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 
@@ -221,68 +221,6 @@ Each function is called with one argument: BASE-TEXT."
         (overlay-put (ktn-headword-headword-overlay hw) 'before-string
                      (propertize display-str 'face 'ktn-headword-face))
         (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))))
-
-(defun ktn--render-candidate-window (parts total current-page)
-  "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
-  (let* ((buf                  (ktn--get-or-create-candidate-buffer))
-         (win                  (display-buffer buf))
-         (win-width            (if (window-live-p win)
-                                   (window-width win)
-                                 (frame-width)))
-         (page-size            (length ktn-select-keys))
-         (total-pages          (ceiling total (float page-size)))
-         (page-str             (mapconcat (lambda (i)
-                                            (if (= i current-page) "■" "□"))
-                                          (number-sequence 0 (1- total-pages))
-                                          ""))
-         ;; ウィンドウ幅を超える場合は数値表記にフォールバック
-         (max-avail-width      (- win-width 4))
-         (display-page-str     (if (> (string-width page-str) max-avail-width)
-                                   (format "(%d/%d)" (1+ current-page) total-pages)
-                                 page-str))
-         (padding              (max 0 (- win-width (string-width display-page-str) 2)))
-         (right-aligned-page   (concat (make-string padding ?\s) display-page-str))
-         (content              (concat (mapconcat #'identity (nreverse parts) "\n")
-                                       (if (> total page-size)
-                                           (concat "\n" right-aligned-page)
-                                         ""))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert content)))
-    (when (window-live-p win)
-      (with-selected-window win
-        (fit-window-to-buffer win)))))
-
-(defun ktn--show-candidates-window ()
-  "変換候補ウィンドウを表示する。"
-  (if (not (ktn--mode-p 'converting))
-      (ktn--close-candidate-window)
-    (let* ((hw         ktn--current-headword)
-           (candidates (ktn-headword-candidates hw))
-           (total      (length candidates))
-           (page-size  (length ktn-select-keys))
-           (current-idx (ktn-headword-candidate-index hw))
-           (current-page (/ current-idx page-size))
-           (start      (* current-page page-size))
-           (end        (min total (+ start page-size)))
-           parts)
-      (cl-loop for i from start below end
-               for cand-cell = (nth i candidates)
-               for c-str = (nth 0 cand-cell)
-               for annot = (nth 1 cand-cell)
-               for source = (nth 2 cand-cell)
-               for source-marker = (if (eq source 'user) "+" " ")
-               for display-str = (if (and annot (not (string-empty-p annot)))
-                                     (concat c-str ";" annot)
-                                   c-str)
-               for key-char = (nth (- i start) ktn-select-keys)
-               for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
-               for formatted = (concat source-marker " " key-str " " display-str)
-               do (push (if (= i current-idx)
-                            (propertize formatted 'face 'ktn-selected-face)
-                          formatted) parts))
-      (ktn--render-candidate-window parts total current-page))))
 
 (defun ktn--render-candidate-window (parts total current-page)
   "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
@@ -775,34 +713,6 @@ Each function is called with one argument: BASE-TEXT."
 
     t))
 
-;;; Keymap & Minor-mode Definition
-(defvar ktn-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map [remap self-insert-command] #'ktn-handle-input)
-
-    (dolist (key '("C-g"    "C-h"   "C-j" "RET" "C-m" "SPC" "q"
-                   "TAB"    "<tab>" "<backtab>" "S-TAB"
-                   "<next>" "<prior>"))
-      (define-key map (kbd key) #'ktn-handle-input))
-    map)
-  "Keymap for `ktn-mode`.")
-
-;;;###autoload
-(define-minor-mode ktn-mode
-  "Toggle Ktn mode."
-  :lighter ktn-lighter
-  :global nil
-  :keymap ktn-mode-map
-  (if ktn-mode
-      (progn (ktn-setup)
-             (ktn--set-cursor-red))
-    (ktn--state-reset)
-    (ktn--unset-cursor-red)
-    (ktn--cleanup-headword))
-  (setq ktn-lighter (if ktn-mode
-                        ktn-indicator
-                      ""))
-  (force-mode-line-update))
 
 (provide 'kotoni-ui)
 ;;; kotoni-ui.el ends here
