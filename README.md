@@ -1,4 +1,4 @@
-# kotoni.el --- Yet another SKK implementation for GNU Emacs 30
+# kotoni.el --- Yet another SKK-like implementation for GNU Emacs 30
 
 Kotoni (琴似) は、Emacs 30 以上で動く、最小限の機能に限った SKK クローン（マイナーモード）です。
 

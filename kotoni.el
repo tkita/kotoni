@@ -1,4 +1,4 @@
-;;; kotoni.el --- Yet another SKK implementation for GNU Emacs 30 -*- lexical-binding: t; coding: utf-8; -*-
+;;; kotoni.el --- Yet another SKK-like implementation for GNU Emacs 30 -*- lexical-binding: t; coding: utf-8; -*-
 
 ;; Copyright (C) 2026
 ;; Version: 0.1
