@@ -119,7 +119,9 @@
  ("3/conversion/page-navigation"    "K a n j i SPC SPC <next> <prior> C-j" "漢字")
  ("3/conversion/previous-candidate" "K a n j i SPC x C-j"                  "幹事")
  ("3/conversion/continuous1"        "K a n j i SPC s a i C-j"              "漢字さい")
- ("3/conversion/continuous2"        "K a n j i SPC S a i C-j"              "漢字さい"))
+ ("3/conversion/continuous2"        "K a n j i SPC S a i C-j"              "漢字さい")
+ ("3/conversion/continuous3"        "K a n j i SPC ?"                      "漢字？")
+ )
 
 (ert-deftest dictionary/recursive-registration ()
   (let ((result

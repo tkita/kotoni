@@ -116,53 +116,112 @@ Each function is called with one argument: BASE-TEXT."
   (setq ktn--normal-roma-buffer "")
   (ktn--state-reset))
 
-(defun ktn--update-inline-display ()
+;; (defun ktn--update-inline-display ()
+;;   (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
+;;       (when (and ktn--current-headword
+;;                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
+;;         (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
+;;         (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
+
+;;     (unless (and ktn--current-headword 
+;;                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)) 
+;;                  (overlay-buffer (ktn-headword-headword-overlay ktn--current-headword)))
+;;       (let ((pos (point)))
+;;         (setf (ktn-headword-headword-overlay ktn--current-headword) (make-overlay pos pos nil t t))))
+;;     (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))
+
+;;     (cond
+;;      ((ktn--mode-p 'headword)
+;;       (let* ((hw ktn--current-headword)
+;;              (input-str (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
+;;                                 (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
+;;                                 (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
+;;              (display-headword (concat "▽" input-str))
+;;              (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
+;;                   (ktn--ensure-completion-cands hw input-str)))
+;;              (preview-suffix (ktn--get-current-completion-suffix)))
+;;         (if (and preview-suffix
+;;                  (not (string-empty-p preview-suffix)))
+;;             (progn
+;;               (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+;;                            (propertize display-headword 'face 'ktn-headword-face))
+;;               (overlay-put (ktn-headword-headword-overlay hw) 'after-string
+;;                            (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
+;;           (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+;;                        (propertize display-headword 'face 'ktn-headword-face))
+;;           (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
+
+;;      ((ktn--mode-p 'converting)
+;;       (let* ((hw ktn--current-headword)
+;;              (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
+;;              (cand-str (cond ((stringp cand) cand)
+;;                              ((consp cand) (or (car cand) (format "%s" cand)))
+;;                              ((listp cand) (format "%s" (car cand)))
+;;                              (t (format "%s" cand))))
+;;              (display-str (concat "▼" cand-str)))
+;;         (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+;;                      (propertize display-str 'face 'ktn-headword-face))
+;;         (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))
+;;      )))
+(defun ktn--render-inline-content ()
+  "▽モードおよび▼モードにおける表示内容を構築し、オーバーレイに適用する。"
+  (cond
+   ;; --- ▽ 見出し語入力モード ---
+   ((ktn--mode-p 'headword)
+    (let* ((hw ktn--current-headword)
+           (input-str (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
+                              (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
+                              (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
+           (display-headword (concat "▽" input-str))
+           (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
+                (ktn--ensure-completion-cands hw input-str)))
+           (preview-suffix (ktn--get-current-completion-suffix)))
+      (if (and preview-suffix
+               (not (string-empty-p preview-suffix)))
+          (progn
+            (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                         (propertize display-headword 'face 'ktn-headword-face))
+            (overlay-put (ktn-headword-headword-overlay hw) 'after-string
+                         (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
+        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                     (propertize display-headword 'face 'ktn-headword-face))
+        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
+
+   ;; --- ▼ 変換モード ---
+   ((ktn--mode-p 'converting)
+    (let* ((hw ktn--current-headword)
+           (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
+           (cand-str (cond ((stringp cand) cand)
+                          ((consp cand) (or (car cand) (format "%s" cand)))
+                          ((listp cand) (format "%s" (car cand)))
+                          (t (format "%s" cand))))
+           (display-str (concat "▼" cand-str)))
+      (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                   (propertize display-str 'face 'ktn-headword-face))
+      (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))))
+
+(defun ktn--manage-headword-overlay ()
+  "現在のモードに応じてインラインオーバーレイの生成・削除・位置調整を行う。"
   (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
+      ;; 非アクティブ時はオーバーレイを削除
       (when (and ktn--current-headword
                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
         (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
         (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
 
+    ;; アクティブ時はオーバーレイを現在位置に確保して追従させる
     (unless (and ktn--current-headword 
                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)) 
                  (overlay-buffer (ktn-headword-headword-overlay ktn--current-headword)))
       (let ((pos (point)))
         (setf (ktn-headword-headword-overlay ktn--current-headword) (make-overlay pos pos nil t t))))
-    (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))
+    (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))))
 
-    (cond
-     ((ktn--mode-p 'headword)
-      (let* ((hw ktn--current-headword)
-             (input-str (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-                                (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
-                                (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
-             (display-headword (concat "▽" input-str))
-             (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
-                  (ktn--ensure-completion-cands hw input-str)))
-             (preview-suffix (ktn--get-current-completion-suffix)))
-        (if (and preview-suffix
-                 (not (string-empty-p preview-suffix)))
-            (progn
-              (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                           (propertize display-headword 'face 'ktn-headword-face))
-              (overlay-put (ktn-headword-headword-overlay hw) 'after-string
-                           (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
-          (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                       (propertize display-headword 'face 'ktn-headword-face))
-          (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
-
-     ((ktn--mode-p 'converting)
-      (let* ((hw ktn--current-headword)
-             (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
-             (cand-str (cond ((stringp cand) cand)
-                             ((consp cand) (or (car cand) (format "%s" cand)))
-                             ((listp cand) (format "%s" (car cand)))
-                             (t (format "%s" cand))))
-             (display-str (concat "▼" cand-str)))
-        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                     (propertize display-str 'face 'ktn-headword-face))
-        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))
-     )))
+(defun ktn--update-inline-display ()
+  "インライン表示の更新を行うメイン関数。"
+  (ktn--manage-headword-overlay)
+  (when (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting))
+    (ktn--render-inline-content)))
 
 (defun ktn--render-candidate-window (parts total current-page)
   "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
@@ -503,14 +562,10 @@ Each function is called with one argument: BASE-TEXT."
   (let* ((ch      last-command-event)
          (matched (ktn--lookup-dispatch ch)))
     (cond
-     (matched
-      (call-interactively (cdr matched)))
-     ((ktn--mode-p 'headword)
-      (ktn--handle-headword-mode ch #'ktn-start-henkan)
-      (ktn--update-inline-display))
-     ((ktn--mode-p 'converting)
-      (ktn--handle-converting-mode ch)
-      (ktn--update-inline-display))
+     (matched                   (call-interactively (cdr matched)))
+     ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
+     ((ktn--mode-p 'converting) (ktn--handle-converting-mode ch)                  (ktn--update-inline-display))
+
      (t
       (ktn--handle-normal-mode ch)
       (when (ktn--mode-p 'headword)

@@ -209,16 +209,16 @@
               (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
 
       (let* ((char-str (ktn--safe-char-to-string lower-ch))
-             (res (ktn--process-roma-input "" char-str)))
-        (setf (ktn-headword-okuri-roma-first hw) char-str
-              (ktn-headword-okuri-buffer hw) (car res)
+             (res      (ktn--process-roma-input "" char-str)))
+        (setf (ktn-headword-okuri-roma-first  hw) char-str
+              (ktn-headword-okuri-buffer      hw) (car res)
               (ktn-headword-okuri-roma-buffer hw) (cdr res))))
 
      ;; 2. 送り仮名入力中
      ((not (string-empty-p (ktn-headword-okuri-roma-first hw)))
       (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-             (res (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) char-str)))
-        (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (car res))
+             (res      (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) char-str)))
+        (setf (ktn-headword-okuri-buffer      hw) (concat (ktn-headword-okuri-buffer hw) (car res))
               (ktn-headword-okuri-roma-buffer hw) (cdr res))
 
         (when (and (string-empty-p (ktn-headword-okuri-roma-buffer hw))
@@ -229,12 +229,13 @@
      ;; 3. 通常の見出し語入力の継続
      (t
       (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-             (res (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
-        (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (car res))
+             (res      (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
+        (setf (ktn-headword-buffer      hw) (concat (ktn-headword-buffer hw) (car res))
               (ktn-headword-roma-buffer hw) (cdr res)))))))
 
 (defconst ktn-converting-action-table
-  `((,#'(lambda (ch-int _ch) (ktn--upper-case-p ch-int))
+  `((,#'(lambda (ch-int _ch)
+          (ktn--upper-case-p ch-int))
      . ,#'(lambda (_ch-int lower-ch _hw)
             (ktn-kakutei)
             (ktn--start-headword-mode)
@@ -244,22 +245,38 @@
                     (ktn-headword-roma-buffer ktn--current-headword) (cdr res))
               (ktn--update-inline-display))))
 
-    (,#'(lambda (ch-int ch) (or (= ch-int ?x) (eq ch 'x)))
+    (,#'(lambda (ch-int ch)
+          (or (= ch-int ?x) (eq ch 'x)))
      . ,#'(lambda (_ch-int _lower-ch _hw)
             (when (fboundp 'ktn-previous-candidate)
               (ktn-previous-candidate))))
 
-    (,#'(lambda (ch-int _ch) (ktn--number-key-p ch-int))
+    (,#'(lambda (ch-int _ch)
+          (ktn--number-key-p ch-int))
      . ,#'(lambda (ch-int _lower-ch _hw)
             (let ((index (- ch-int ?1)))
               (ktn-select-nth-candidate index))
             (ktn-kakutei)))
 
-    (,#'(lambda (ch-int _ch) (ktn--lower-case-p ch-int))
+    (,#'(lambda (ch-int _ch)
+          (ktn--lower-case-p ch-int))
      . ,#'(lambda (_ch-int lower-ch _hw)
             (ktn-kakutei)
             (let ((last-command-event lower-ch))
-              (ktn--handle-normal-mode last-command-event)))))
+              (ktn--handle-normal-mode last-command-event))))
+
+    (,#'(lambda (_ch-int ch)
+          (let ((char-str (ktn--safe-char-to-string ch)))
+            (and (member char-str '("," "." "?" "[" "]"))
+                 (cdr (assoc char-str ktn-roma-table)))))
+     . ,#'(lambda (_ch-int lower-ch _hw)
+            ;; 直前の入力文字（または lower-ch 等）から記号文字列を算出
+            (let* ((char-str (ktn--safe-char-to-string lower-ch))
+                   (res (ktn--process-roma-input "" char-str))
+                   (symbol-str (car res)))
+              (ktn-kakutei)
+              (when (and symbol-str (not (string-empty-p symbol-str)))
+                (insert symbol-str))))))
   "変換モード中におけるキーアクションのディスパッチテーブル。")
 
 (defun ktn--handle-converting-mode (ch)

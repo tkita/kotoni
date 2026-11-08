@@ -158,14 +158,21 @@
             (insert (json-encode ktn--stats-data))))
       (error (message "Failed to save ktn stats file: %s" err)))))
 
+(defun ktn--message (format-string &rest args)
+  "バッチモード（noninteractive）では何もせず、対話モード時のみ message を出力する。"
+  (unless noninteractive
+    (apply #'message format-string args)))
+
 (defun ktn--load-dictionary-data (dict)
   "ktn辞書（Trie-JSON形式）をロードし、dataスロットに格納する。"
-  (let ((path (ktn-dictionary-path dict)))
-    (when (and path (file-exists-p path))
-      (with-temp-buffer
-        (insert-file-contents path)
-        (setf (ktn-dictionary-data dict)
-              (json-parse-buffer :object-type 'hash-table))))))
+  (when-let* ((path (ktn-dictionary-path dict))
+              ((file-exists-p path)))
+    (ktn--message "loading %s" path)
+    (with-temp-buffer
+      (insert-file-contents path)
+      (setf (ktn-dictionary-data dict)
+            (json-parse-buffer :object-type 'hash-table)))
+    (ktn--message "loading %s...done" path)))
 
 (defun ktn--parse-candidate-items (items)
   "candidates部分のデータ（ハッシュやリスト、ベクター）をパースし、(word . annotation) のリストに正規化する。"
