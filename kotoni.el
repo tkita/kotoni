@@ -55,7 +55,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map [remap self-insert-command] #'ktn-handle-input)
 
-    (dolist (key '("C-g"    "C-h"   "C-j" "RET" "C-m" "SPC" "q"
+    (dolist (key '("C-g"    "C-h"   "C-j" "RET" "C-m" "SPC" "q" "M-SPC"
                    "TAB"    "<tab>" "<backtab>" "S-TAB"
                    "<next>" "<prior>"))
       (define-key map (kbd key) #'ktn-handle-input))

@@ -121,6 +121,7 @@
  ("3/conversion/continuous1"        "K a n j i SPC s a i C-j"              "漢字さい")
  ("3/conversion/continuous2"        "K a n j i SPC S a i C-j"              "漢字さい")
  ("3/conversion/continuous3"        "K a n j i SPC ?"                      "漢字？")
+ ("4/completion/conversion1"        "K a n n M-SPC C-j"                    "漢字")
  )
 
 (ert-deftest dictionary/recursive-registration ()

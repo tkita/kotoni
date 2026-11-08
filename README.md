@@ -24,7 +24,7 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 
 - 自動 off 機能:
   * プログラミング系メジャーモードにおいて、カーソル（ポイント）がコメント or 文字列の「外」に出たら、自動で off
-  * とすることが可能な `kotoni-auto.el` を同梱。
+  * これを実現するメジャーモード `kotoni-auto.el` を同梱。
 
 - そのほか:
   * 機能不足: DDSKK と比べ、まったく足りてません。
@@ -75,8 +75,8 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 (add-to-list 'load-path "/path/to/kotoni")
 
 ;; 辞書ファイルや個人統計ファイルのパス設定（任意）
-(setq ktn-jisyo-file (expand-file-name "~/.emacs.d/SKK-JISYO.trie.json")
-      ktn-stats-file (expand-file-name "~/.jisyo.json"))
+(setq ktn-jisyo-file (expand-file-name ".emacs.d/SKK-JISYO.trie.json" "~/")
+      ktn-stats-file (expand-file-name ".jisyo.json" "~/"))
 
 ;; ユーザー独自のローマ字・記号変換ルールを追加（任意）
 ;; (setq ktn-user-roma-table '(("z," . "‥") ("z." . "…")))
@@ -94,6 +94,9 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 
 `M-x ktn-mode` または設定したキー（例: `C-x C-j`）でマイナーモードを有効化します。
 
+ - skk で言う「かなモード」のみです。カナモード、全英モード、アスキーモードはありません。
+
+
 ### 基本的な入力・変換
 | 操作・入力                      | 挙動                                                                   |
 | :------------------------------ | :--------------------------------------------------------------------- |
@@ -106,11 +109,20 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 | `C-h` / `DEL`                   | **バックスペース**（入力文字を1文字ずつ削除）。                        |
 | `q`                             | **カタカナ変換確定**（▽モード時）。                                   |
 
-### TAB 補完機能
+### 送り仮名が有る場合
+
+- `U` `g` `o` **`K`** `u`
+  - 動く
+
+- `H` `a` `s` `i` **`T`** `t` `a`
+  - 走った
+
+### 見出し語の補完機能
 | 操作・入力            | 挙動                                                                     |
 | :-------------------- | :----------------------------------------------------------------------- |
 | `TAB` / `<tab>`       | ▽モード時に前方一致する見出し語を**順方向**に補完・候補一覧表示します。 |
 | `<backtab>` / `S-TAB` | ▽モード時に補完候補を**逆方向**に巡回します。                           |
+| `<meta>-SPC`      | 補完し、変換します（TAB 押して, SPC 押すよりも気軽な気がします）                 |
 
 ### 変換中の候補選択
 | 操作・入力                               | 挙動 |

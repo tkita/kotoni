@@ -75,15 +75,16 @@ Each function is called with one argument: BASE-TEXT."
 (defvar ktn-lighter "")
 
 (defconst ktn-dispatch-table
-  '(((C-g  7)                     . ktn-quit)
-    ((C-h  8)                     . ktn-backspace-handler)
-    ((C-j 10)                     . ktn-kakutei)
-    ((C-m 13 RET return [return]) . ktn-return-key-handler)
-    ((SPC 32)                     . ktn-start-henkan)
-    ((TAB tab [tab] ?\t)          . ktn-tab-key-handler)
-    ((<backtab> backtab S-TAB)    . ktn-backtab-key-handler)
-    ((<prior> prior)              . ktn-prior-page) ; PgUp
-    ((<next> next)                . ktn-next-page)) ; PgDn
+  '((( C-g  7                     ) . ktn-quit)
+    (( C-h  8                     ) . ktn-backspace-handler)
+    (( C-j 10                     ) . ktn-kakutei)
+    (( C-m 13 RET return [return] ) . ktn-return-key-handler)
+    (( SPC 32                     ) . ktn-start-henkan)
+    (( M-SPC                      ) . ktn-completion-and-henkan) ; ktn--normalize-input() で正規化
+    (( TAB tab [tab] ?\t          ) . ktn-tab-key-handler)
+    (( <backtab> backtab S-TAB    ) . ktn-backtab-key-handler)
+    (( <prior>   prior            ) . ktn-prior-page) ; PgUp
+    (( <next>    next             ) . ktn-next-page)) ; PgDn
   "キーイベントディスパッチテーブル。")
 
 ;;; 表示・描画系関数
@@ -116,53 +117,6 @@ Each function is called with one argument: BASE-TEXT."
   (setq ktn--normal-roma-buffer "")
   (ktn--state-reset))
 
-;; (defun ktn--update-inline-display ()
-;;   (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
-;;       (when (and ktn--current-headword
-;;                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
-;;         (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
-;;         (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
-
-;;     (unless (and ktn--current-headword 
-;;                  (overlayp (ktn-headword-headword-overlay ktn--current-headword)) 
-;;                  (overlay-buffer (ktn-headword-headword-overlay ktn--current-headword)))
-;;       (let ((pos (point)))
-;;         (setf (ktn-headword-headword-overlay ktn--current-headword) (make-overlay pos pos nil t t))))
-;;     (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))
-
-;;     (cond
-;;      ((ktn--mode-p 'headword)
-;;       (let* ((hw ktn--current-headword)
-;;              (input-str (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-;;                                 (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
-;;                                 (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
-;;              (display-headword (concat "▽" input-str))
-;;              (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
-;;                   (ktn--ensure-completion-cands hw input-str)))
-;;              (preview-suffix (ktn--get-current-completion-suffix)))
-;;         (if (and preview-suffix
-;;                  (not (string-empty-p preview-suffix)))
-;;             (progn
-;;               (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-;;                            (propertize display-headword 'face 'ktn-headword-face))
-;;               (overlay-put (ktn-headword-headword-overlay hw) 'after-string
-;;                            (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
-;;           (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-;;                        (propertize display-headword 'face 'ktn-headword-face))
-;;           (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
-
-;;      ((ktn--mode-p 'converting)
-;;       (let* ((hw ktn--current-headword)
-;;              (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
-;;              (cand-str (cond ((stringp cand) cand)
-;;                              ((consp cand) (or (car cand) (format "%s" cand)))
-;;                              ((listp cand) (format "%s" (car cand)))
-;;                              (t (format "%s" cand))))
-;;              (display-str (concat "▼" cand-str)))
-;;         (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-;;                      (propertize display-str 'face 'ktn-headword-face))
-;;         (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))
-;;      )))
 (defun ktn--render-inline-content ()
   "▽モードおよび▼モードにおける表示内容を構築し、オーバーレイに適用する。"
   (cond
@@ -546,21 +500,51 @@ Each function is called with one argument: BASE-TEXT."
    (t
     (delete-char -1))))
 
-(defun ktn--lookup-dispatch (ch)
-  "キーイベント CH にマッチする `ktn-dispatch-table' のエントリを検索。"
-  (cl-find-if (lambda (entry)
-                (let ((keys (car entry)))
-                  (if (listp keys)
-                      (memq ch keys)
-                    (eq ch keys))))
-              ktn-dispatch-table))
+(defun ktn--normalize-input (ch keys)
+  "入力イベント CH とキーシーケンス KEYS を前裁きし、抽象化されたキーを返す。"
+  (let ((key-desc (and keys (key-description keys))))
+    (cond
+     ;; --- M-SPC / ESC SPC の揺らぎをすべて 'M-SPC に正規化 ---
+     ((or (and key-desc (or (equal key-desc "M-SPC")
+                            (equal key-desc "ESC SPC")
+                            (string-prefix-p "ESC" key-desc)))
+          (and (numberp ch) (= ch 32) keys (seq-contains-p keys 27))
+          (and (integerp ch) (= (logand ch #x3fff) 32) (not (= ch 32)))
+          (equal ch 134217760)) ; テスト等で渡る特定の値
+      'M-SPC)
+     
+     ;; --- 通常の数値やシンボルはそのまま返す ---
+     (t ch))))
+
+(defun ktn--lookup-dispatch (ch &optional keys)
+  "前裁きされたキーを基に `ktn-dispatch-table' を検索する（本体）。"
+  (let ((norm-key (ktn--normalize-input ch keys)))
+    (cl-find-if
+     (lambda (entry)
+       (let ((table-keys (car entry)))
+         (cl-some
+          (lambda (k)
+            (cond
+             ;; 1. 数値同士の比較
+             ((and (numberp k) (numberp norm-key) (= k norm-key))     t)
+             ;; 2. シンボルやその他の完全一致 (equal)
+             ((equal k norm-key)                                      t)
+             ;; 3. キーシーケンス（keys）との比較
+             ((and keys (equal k keys))                               t)
+             ;; 4. キーディスクリプション文字列の一致
+             ((and keys (stringp k) (equal k (key-description keys))) t)
+             (t nil)))
+          (if (listp table-keys) table-keys (list table-keys)))))
+     ktn-dispatch-table)))
 
 (defun ktn-handle-input ()
   "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
   (interactive)
   (barf-if-buffer-read-only)
   (let* ((ch      last-command-event)
-         (matched (ktn--lookup-dispatch ch)))
+         (keys (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
+         (matched (ktn--lookup-dispatch ch keys)))
+    ;; (message "DEBUG: last-command-event = %S, this-command-keys = %s, matched = %S" ch keys matched) ; デバッグ用
     (cond
      (matched                   (call-interactively (cdr matched)))
      ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
@@ -570,6 +554,11 @@ Each function is called with one argument: BASE-TEXT."
       (ktn--handle-normal-mode ch)
       (when (ktn--mode-p 'headword)
         (ktn--update-inline-display))))))
+
+(defun ktn-completion-and-henkan ()
+  (interactive)
+  (ktn--headword-completion 1)
+  (call-interactively #'ktn-start-henkan))
 
 (defun ktn-start-henkan ()
   "Start conversion or cycle through candidates with SPC."
