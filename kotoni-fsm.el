@@ -139,7 +139,18 @@
              (res      (ktn--process-roma-input ktn--normal-roma-buffer char-str)))
         (setq ktn--normal-roma-buffer (cdr res))
         (unless (string-empty-p (car res))
-          (insert (car res))))))))
+          (insert (car res))
+
+          (when ktn-auto-insert-paren
+            (ktn--insert-paren (car res)))))))))
+
+(defun ktn--insert-paren (opstr)
+  "Insert corresponding closing bracket for OPSTR if `ktn-auto-insert-paren' is enabled."
+  (when-let* ((paren (assoc opstr ktn-auto-paren-string-alist))
+              (close-str (cdr paren)))
+    (unless (string= close-str (char-to-string (following-char)))
+      (insert close-str)
+      (goto-char (- (point) 1)))))
 
 (defun ktn--handle-punctuation-trigger (hw char-str)
   "CHAR-STR に対応する句読点プロセッサを設定して変換を開始する。"

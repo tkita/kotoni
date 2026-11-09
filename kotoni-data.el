@@ -101,7 +101,9 @@
     ("zH" . "⇐") ("zJ" . "⇓") ("zK" . "⇑")  ("zL" . "⇒")
     ("z~"  . "〜")
     ("!" . "！") ("," . "、") ("-" . "ー") ("." . "。")
-    (":" . "：") (";" . "；") ("?" . "？") ("[" . "「") ("]" . "」")))
+    (":" . "：") (";" . "；") ("?" . "？")
+    ("(" . "（") (")" . "）") ("<" . "＜") (">" . "＞") ("[" . "「") ("]" . "」") ("{" . "｛") ("}" . "｝")
+    ))
 
 (defvar ktn-roma-table nil)
 
@@ -122,6 +124,17 @@
          (set-default symbol value)
          (ktn-setup-roma-table))
   :group 'kotoni)
+
+(defcustom ktn-auto-insert-paren t
+  "Enable automatic insertion of closing brackets."
+  :type 'boolean
+  :group 'kotoni)
+
+(defconst ktn-auto-paren-string-alist
+  '(("「" . "」") ("『" . "』") ("（" . "）")
+    ("｛" . "｝") ("〈" . "〉") ("《" . "》") ("［" . "］")
+    ("〔" . "〕") ("【" . "】") ("“" . "”"))
+  "Alist of opening brackets and their corresponding closing brackets.")
 
 ;;; 辞書・統計関連処理
 (defun ktn--load-stats ()
