@@ -116,7 +116,7 @@
 
 (defun ktn--handle-normal-mode (ch)
   "通常モード時の入力処理"
-  (let* ((ch-int    (ktn--to-char-int ch))
+  (let* ((ch-int   (ktn--to-char-int ch))
          (is-upper (ktn--upper-case-p ch-int))
          (lower-ch (if is-upper (+ ch-int 32) ch-int))
          (is-alpha (ktn--lower-case-p lower-ch)))
@@ -182,31 +182,38 @@
     (?\[ . (lambda (hw)
              (setf (ktn-headword-post-processor hw)
                    (ktn--make-bracket-processor "「" "」"))
-             (ktn-start-henkan))))
+             (ktn-start-henkan)))
+
+    (?\( . (lambda (hw)
+             (setf (ktn-headword-post-processor hw)
+                   (ktn--make-bracket-processor "（" "）"))
+             (ktn-start-henkan)))
+    )
   "見出し語モード中における特殊キーとアクションの定義テーブル。")
 
 (defun ktn--handle-headword-mode (ch &optional start-henkan-fn)
-  "▽時の入力処理"
+  "見出し語入力モードでの入力処理。"
   (unless ktn--current-headword
     (ktn--start-headword-mode))
-  
-  (let* ((hw       ktn--current-headword)
-         (ch-int   (ktn--to-char-int ch))
-         (is-upper (ktn--upper-case-p ch-int))
-         (lower-ch (if is-upper (+ ch-int 32)
-                     ch-int))
-         (is-alpha (ktn--lower-case-p lower-ch))
-         (action   (cdr (assq ch-int ktn-headword-action-table))))
 
+  (let* ((hw        ktn--current-headword)
+         (ch-int    (ktn--to-char-int ch))
+         (is-upper  (ktn--upper-case-p ch-int))
+         (lower-ch  (if is-upper (+ ch-int 32) ch-int))
+         (is-alpha  (ktn--lower-case-p lower-ch))
+         (input-ch  (if is-alpha lower-ch ch-int))
+         (input-str (ktn--safe-char-to-string input-ch))
+         (action    (cdr (assq ch-int ktn-headword-action-table))))
     (ktn--reset-completion hw)
 
     (cond
+     ;; 明示的アクション
      (action
       (funcall action hw))
 
-     ;; 1. 大文字入力
+     ;; 大文字入力: 送り仮名の開始
      (is-upper
-      (unless (string-empty-p (ktn-headword-roma-buffer hw))
+      (when (not (string-empty-p (ktn-headword-roma-buffer hw)))
         (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) "")))
           (setf (ktn-headword-buffer hw)
                 (concat (ktn-headword-buffer hw) (car res))
@@ -216,30 +223,30 @@
         (setf (ktn-headword-buffer hw)
               (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
 
-      (let* ((char-str (ktn--safe-char-to-string lower-ch))
-             (res      (ktn--process-roma-input "" char-str)))
-        (setf (ktn-headword-okuri-roma-first  hw) char-str
+      (let ((res (ktn--process-roma-input "" input-str)))
+        (setf (ktn-headword-okuri-roma-first  hw) input-str
               (ktn-headword-okuri-buffer      hw) (car res)
               (ktn-headword-okuri-roma-buffer hw) (cdr res))))
 
-     ;; 2. 送り仮名入力中
+     ;; 送り仮名入力中
      ((not (string-empty-p (ktn-headword-okuri-roma-first hw)))
-      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-             (res      (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) char-str)))
-        (setf (ktn-headword-okuri-buffer      hw) (concat (ktn-headword-okuri-buffer hw) (car res))
+      (let ((res (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) input-str)))
+        (setf (ktn-headword-okuri-buffer      hw)
+              (concat (ktn-headword-okuri-buffer hw) (car res))
               (ktn-headword-okuri-roma-buffer hw) (cdr res))
 
         (when (and (string-empty-p (ktn-headword-okuri-roma-buffer hw))
-                   (not (string-empty-p (ktn-headword-okuri-buffer hw))))
-          (when start-henkan-fn
-            (funcall start-henkan-fn)))))
+                   (not (string-empty-p (ktn-headword-okuri-buffer hw)))
+                   start-henkan-fn)
+          (funcall start-henkan-fn))))
 
-     ;; 3. 通常の見出し語入力の継続
+     ;; 通常の見出し語入力
      (t
-      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-             (res      (ktn--process-roma-input (ktn-headword-roma-buffer hw) char-str)))
-        (setf (ktn-headword-buffer      hw) (concat (ktn-headword-buffer hw) (car res))
+      (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) input-str)))
+        (setf (ktn-headword-buffer      hw)
+              (concat (ktn-headword-buffer hw) (car res))
               (ktn-headword-roma-buffer hw) (cdr res)))))))
+
 
 (defconst ktn-converting-action-table
   `((,#'(lambda (ch-int _ch)
