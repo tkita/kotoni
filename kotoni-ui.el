@@ -663,7 +663,8 @@ Each function is called with one argument: BASE-TEXT."
     (ktn--setup-internal)))
 
 (defun ktn--setup-internal ()
-  (unless ktn-roma-table
+  (unless (and (boundp 'ktn-roma-exact-hash)
+               ktn-roma-exact-hash)
     (ktn-setup-roma-table))
 
   (unless ktn-dictionaries

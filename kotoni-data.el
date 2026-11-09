@@ -105,17 +105,55 @@
     ("(" . "（") (")" . "）") ("<" . "＜") (">" . "＞") ("[" . "「") ("]" . "」") ("{" . "｛") ("}" . "｝")
     ))
 
-(defvar ktn-roma-table nil)
+(defvar ktn-roma-exact-hash nil)
+
+(defvar ktn-roma-prefix-hash nil)
+
+(defun ktn--build-roma-exact-hash (alist)
+  (let ((h (make-hash-table :test #'equal
+                           :size (max 1024 (length alist)))))
+    (dolist (cell alist)
+      (puthash (car cell) (cdr cell) h))
+    h))
+
+(defun ktn--build-roma-prefix-hash (alist)
+  (let ((h (make-hash-table :test #'equal
+                           :size (max 1024 (* 4 (length alist))))))
+    (dolist (cell alist)
+      (let ((key (car cell)))
+        (dotimes (i (length key))
+          (puthash (substring key 0 (1+ i)) t h))))
+    h))
 
 (defun ktn-setup-roma-table ()
-  "Merge `ktn-user-roma-table` and `ktn-default-roma-table` into `ktn-roma-table`."
-  (let ((table nil))
-    (dolist (elt ktn-user-roma-table)
+  (let ((seen (make-hash-table :test #'equal))
+        table)
+    ;; user entries
+    (dolist (elt (or ktn-user-roma-table nil))
+      (puthash (car elt) t seen)
       (push elt table))
-    (cl-loop for elt in ktn-default-roma-table
-             unless (assoc (car elt) ktn-user-roma-table)
-             do (push elt table))
-    (setq ktn-roma-table (nreverse table))))
+
+    ;; default entries
+    (dolist (elt ktn-default-roma-table)
+      (unless (gethash (car elt) seen)
+        (push elt table)
+        (puthash (car elt) t seen)))
+
+    ;;
+    (let ((roma-table (nreverse table)))
+      (setq ktn-roma-exact-hash  (ktn--build-roma-exact-hash  roma-table))
+      (setq ktn-roma-prefix-hash (ktn--build-roma-prefix-hash roma-table)))))
+
+(defun ktn--roma-table-get (roma)
+  ;; "ka" => "か"
+  ;; "nn" => "ん"
+  (gethash roma ktn-roma-exact-hash))
+
+(defun ktn--roma-prefix-p (prefix)
+  ;; "k"  => t
+  ;; "ka" => t
+  ;; "zz" => nil
+  (gethash prefix ktn-roma-prefix-hash))
 
 (defcustom ktn-user-roma-table nil
   "User-defined Romaji-to-Kana conversion table."
@@ -183,17 +221,16 @@
     (ktn--message "loading %s" path)
     (with-temp-buffer
       (insert-file-contents path)
-      (setf (ktn-dictionary-data dict)
-            (json-parse-buffer :object-type 'hash-table)))
+      (setf (ktn-dictionary-data dict) (json-parse-buffer :object-type 'hash-table)))
     (ktn--message "loading %s...done" path)))
 
 (defun ktn--parse-candidate-items (items)
   "candidates部分のデータ（ハッシュやリスト、ベクター）をパースし、(word . annotation) のリストに正規化する。"
   ;; items がハッシュテーブルまたはベクターの場合のフォールバック処理
   (when (hash-table-p items)
-    (setq items (or (gethash "word" items)
+    (setq items (or (gethash "word"       items)
                     (gethash "candidates" items)
-                    (gethash "cands" items)
+                    (gethash "cands"      items)
                     items)))
 
   (let ((item-list (cond ((vectorp items) (append items nil))
@@ -232,7 +269,7 @@
                                 (t                 (list entries)))))
           (dolist (entry entry-list)
             (when (hash-table-p entry)
-              (let ((hw (gethash "headword" entry))
+              (let ((hw    (gethash "headword"   entry))
                     (cands (gethash "candidates" entry)))
                 (when (string= midasi hw)
                   (setq raw-cands cands)))))))

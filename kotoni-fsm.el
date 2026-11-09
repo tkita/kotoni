@@ -78,27 +78,24 @@
     ((or character integer) (char-to-string ch))
     (t "")))
 
-(defun ktn--roma-prefix-p (prefix)
-  (cl-some (lambda (pair)
-             (string-prefix-p prefix (car pair)))
-           ktn-roma-table))
-
 (defun ktn--process-roma-input (old-roma char-str)
-  "OLD-ROMA と入力文字 CHAR-STR からローマ字・かな変換を計算する。"
   (let* ((new-roma (concat old-roma char-str))
-         (kana     (cdr (assoc new-roma ktn-roma-table))))
+         (kana     (ktn--roma-table-get new-roma))
+         (is-n     (and (string= old-roma "n")
+                        (not (string-match-p "\\`[aiueoyn]\\'" char-str))))
+         (is-ss    (and (= (length old-roma) 1)
+                        (string= old-roma char-str)
+                        (string-match-p "\\`[b-df-hj-np-tv-z]\\'" char-str))))
     (cond
      (kana
       (cons kana ""))
 
-     ((and (string= old-roma "n")
-           (not (member char-str '("a" "i" "u" "e" "o" "y" "n"))))
-      (let ((next-kana (cdr (assoc char-str ktn-roma-table))))
-        (cons (concat "ん" (or next-kana "")) (if next-kana "" char-str))))
+     (is-n
+      (let ((next-kana (ktn--roma-table-get char-str)))
+        (cons (concat "ん" (or next-kana ""))
+              (if next-kana "" char-str))))
 
-     ((and (= (length old-roma) 1)
-           (string= old-roma char-str)
-           (string-match-p "^[b-df-hj-np-tv-z]$" char-str))
+     (is-ss
       (cons "っ" char-str))
 
      ((ktn--roma-prefix-p new-roma)
@@ -278,8 +275,8 @@
 
     (,#'(lambda (_ch-int ch)
           (let ((char-str (ktn--safe-char-to-string ch)))
-            (and (member char-str '("," "." "?" "[" "]"))
-                 (cdr (assoc char-str ktn-roma-table)))))
+            (and (member char-str '("," "." "?" "[" "]" "(" ")"))
+                 (ktn--roma-table-get char-str))))
      . ,#'(lambda (_ch-int lower-ch _hw)
             ;; 直前の入力文字（または lower-ch 等）から記号文字列を算出
             (let* ((char-str (ktn--safe-char-to-string lower-ch))
