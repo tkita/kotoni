@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'ccc)             ; buffer local cursor color control library
 (require 'kotoni-data)
 (require 'kotoni-fsm)
 
@@ -68,8 +69,6 @@ Each function is called with one argument: BASE-TEXT."
 
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 
-(defvar-local ktn--saved-cursor-color nil)
-
 (defconst ktn-candidate-buffer-name " *ktn-candidates*")
 
 (defvar ktn-lighter "")
@@ -89,15 +88,14 @@ Each function is called with one argument: BASE-TEXT."
 
 ;;; 表示・描画系関数
 (defun ktn--set-cursor-red ()
-  (setq ktn--saved-cursor-color (or ktn--saved-cursor-color
-                                    (frame-parameter nil 'cursor-color)
-                                    (face-attribute 'cursor :background)))
-  (set-cursor-color "red"))
+  "Set the current buffer's cursor color to red via ccc.el."
+  (when (fboundp #'ccc-set-buffer-local-cursor-color)
+    (ccc-set-buffer-local-cursor-color "red")))
 
 (defun ktn--unset-cursor-red ()
-  (when ktn--saved-cursor-color
-    (set-cursor-color ktn--saved-cursor-color)
-    (setq ktn--saved-cursor-color nil)))
+  "Restore the normal cursor color for the current buffer via ccc.el."
+  (when (fboundp #'ccc-set-cursor-color-buffer-local)
+    (ccc-set-cursor-color-buffer-local nil)))
 
 (defun ktn--get-or-create-candidate-buffer ()
   (get-buffer-create ktn-candidate-buffer-name))
@@ -659,6 +657,9 @@ Each function is called with one argument: BASE-TEXT."
 
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
+  (when (fboundp #'ccc-setup)
+    (ccc-setup))
+
   (when (ktn--load-stats)
     (ktn--setup-internal)))
 
