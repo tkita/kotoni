@@ -16,6 +16,10 @@
 (require 'kotoni-data)
 (require 'kotoni-fsm)
 
+;;;
+;;; 定数・変数・フェイス定義
+;;;
+
 (defface ktn-headword-face
   '((t (:inherit underline)))
   "Face for ▽/▼ headword overlay."
@@ -69,9 +73,21 @@ Each function is called with one argument: BASE-TEXT."
 
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 
-(defconst ktn-candidate-buffer-name " *ktn-candidates*")
+(defvar ktn-candidate-style 'child
+  "候補表示スタイル。
+nil = 従来版。*ktn-candidates* を開く
+'child = child frame 版")
 
 (defvar ktn-lighter "")
+
+(defconst ktn-candidate-buffer-name " *ktn-candidates*")
+
+(defvar ktn--candidate-child-frame nil
+  "Frame used for the candidate popup child window.")
+
+(defconst ktn--candidate-style-table
+  '((nil   . (ktn--render-candidate-window       . ktn--close-candidate-window))
+    (child . (ktn--render-candidate-window-child . ktn--close-candidate-window-child))))
 
 (defconst ktn-dispatch-table
   '((( C-g  7                     ) . ktn-quit)
@@ -86,7 +102,10 @@ Each function is called with one argument: BASE-TEXT."
     (( <next>    next             ) . ktn-next-page)) ; PgDn
   "キーイベントディスパッチテーブル。")
 
-;;; 表示・描画系関数
+;;;
+;;; カーソル・バッファ・ウィンドウ管理の共通ヘルパー
+;;;
+
 (defun ktn--set-cursor-red ()
   "Set the current buffer's cursor color to red via ccc.el."
   (when (fboundp #'ccc-set-buffer-local-cursor-color)
@@ -112,8 +131,13 @@ Each function is called with one argument: BASE-TEXT."
     (when (markerp (ktn-headword-start-marker ktn--current-headword))
       (setf (ktn-headword-start-marker ktn--current-headword) nil)))
   (ktn--close-candidate-window)
+  (ktn--close-candidate-window-dispatch)
   (setq ktn--normal-roma-buffer "")
   (ktn--state-reset))
+
+;;;
+;;; 見出し語の表示制御
+;;;
 
 (defun ktn--render-inline-content ()
   "▽モードおよび▼モードにおける表示内容を構築し、オーバーレイに適用する。"
@@ -175,6 +199,10 @@ Each function is called with one argument: BASE-TEXT."
   (when (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting))
     (ktn--render-inline-content)))
 
+;;;
+;;; 候補ウィンドウの描画と位置制御
+;;;
+
 (defun ktn--render-candidate-window (parts total current-page)
   "候補ウィンドウの共通描画・レイアウト・ページャー生成処理。"
   (let* ((buf                  (ktn--get-or-create-candidate-buffer))
@@ -219,24 +247,24 @@ Each function is called with one argument: BASE-TEXT."
            (start      (* current-page page-size))
            (end        (min total (+ start page-size)))
            parts)
-      (cl-loop for i from start below end
-               for cand-cell = (nth i candidates)
-               for c-str = (nth 0 cand-cell)
-               for annot = (nth 1 cand-cell)
-               for source = (nth 2 cand-cell)
-               for source-marker = (if (eq source 'user) "+" " ")
-               for display-str = (if (and annot (not (string-empty-p annot)))
-                                     (concat c-str ";" annot)
-                                   c-str)
-               for key-char = (nth (- i start) ktn-select-keys)
-               for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
-               for formatted = (concat source-marker " " key-str " " display-str)
-               do (push (if (= i current-idx)
-                            (propertize formatted 'face 'ktn-selected-face)
-                          formatted) parts))
-      (ktn--render-candidate-window parts total current-page))))
+      (when candidates
+        (cl-loop for i from start below end
+                 for cand-cell = (nth i candidates)
+                 for c-str = (nth 0 cand-cell)
+                 for annot = (nth 1 cand-cell)
+                 for source = (nth 2 cand-cell)
+                 for source-marker = (if (eq source 'user) "+" " ")
+                 for display-str = (if (and annot (not (string-empty-p annot)))
+                                       (concat c-str ";" annot)
+                                     c-str)
+                 for key-char = (nth (- i start) ktn-select-keys)
+                 for key-str = (propertize (format " %c " key-char) 'face 'ktn-index-face)
+                 for formatted = (concat source-marker " " key-str " " display-str)
+                 do (push (if (= i current-idx)
+                              (propertize formatted 'face 'ktn-selected-face)
+                            formatted) parts))
+        (ktn--render-candidate-window-dispatch parts total current-page)))))
 
-;;; 前後の候補へ移動する関数
 (defun ktn-previous-candidate ()
   "Move to the previous conversion candidate."
   (interactive)
@@ -287,7 +315,123 @@ Each function is called with one argument: BASE-TEXT."
       (ktn--show-candidates-window))))
 
 ;;;
-;;; 見出し語の補完
+;;; 候補ウィンドウの別実装/フレーム制御
+;;;
+
+(defun ktn--candidate-style-entry ()
+  (or (assoc ktn-candidate-style ktn--candidate-style-table)
+      (assoc nil                 ktn--candidate-style-table)))
+
+(defun ktn--render-candidate-window-dispatch (parts total current-page)
+  (let ((render-fn (car (cdr (ktn--candidate-style-entry)))))
+    (funcall render-fn parts total current-page)))
+
+(defun ktn--close-candidate-window-dispatch ()
+  (let ((close-fn (cdr (cdr (ktn--candidate-style-entry)))))
+    (funcall close-fn)))
+
+(defun ktn--close-candidate-window-child ()
+  (when (and (boundp 'ktn--candidate-child-frame)
+             (frame-live-p ktn--candidate-child-frame))
+    (delete-frame ktn--candidate-child-frame)
+    (setq ktn--candidate-child-frame nil)))
+
+(defun ktn--setup-candidate-frame (frame)
+  (dolist (spec
+           '((undecorated           . t)
+             (title                 . "")
+             (border-color          . "#b8a04f")
+             (internal-border-width . 2)
+             (background-color      . "#fff3b0")
+             (foreground-color      . "#222222")
+             (alpha                 . (90 90))))
+    (set-frame-parameter frame (car spec) (cdr spec)))
+  (when (frame-live-p frame)
+    (let ((win (frame-root-window frame)))
+      (set-window-fringes win 0 0))))
+
+(defun ktn--ensure-candidate-child-frame ()
+  "候補表示用 child frame を作成または再利用する。"
+  (unless (and (frame-live-p ktn--candidate-child-frame)
+               (frame-parameter ktn--candidate-child-frame 'parent-frame))
+    (setq ktn--candidate-child-frame
+          (make-frame
+           `((name        . "")
+             (title       . "")
+             (undecorated . t)
+             (minibuffer . nil)
+             (parent-frame . ,(selected-frame))
+             (internal-border-width . 2)
+             (border-width . 0)
+             (vertical-scroll-bars . nil)
+             (horizontal-scroll-bars . nil)
+             (menu-bar-lines . 0)
+             (tool-bar-lines . 0)
+             (unsplittable . t)
+             (no-accept-focus . t)
+             (visibility . nil)
+             (cursor-type . nil))))
+    (ktn--setup-candidate-frame   ktn--candidate-child-frame)
+    (ktn--position-candidate-child-frame ktn--candidate-child-frame))
+
+  ktn--candidate-child-frame)
+
+(defun ktn--position-candidate-child-frame (frame)
+  (let* ((posn (posn-at-point (point)))
+         (xy   (and posn (posn-x-y posn))))
+    (if xy
+        (set-frame-position frame
+                            (+ (car xy) 16)
+                            (+ (cdr xy) 20))
+      ;; フォールバック
+      (set-frame-position frame 40 40))))
+
+(defun ktn--render-candidate-window-child (parts total current-page)
+  (let* ((buf        (ktn--get-or-create-candidate-buffer))
+         (frame      (ktn--ensure-candidate-child-frame))
+         (page-size  (length ktn-select-keys))
+         (page-total (max 1 (ceiling total page-size)))
+         (page-label (format "Page %d/%d" (1+ current-page) page-total))
+         (content-lines (append (mapcar (lambda (s)
+                                          (string-trim-right s "\n"))
+                                        (nreverse parts))
+                                (list page-label)))
+         (content    (string-trim-right
+                      (mapconcat #'identity content-lines "\n")
+                      "\n")))
+
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (setq-local mode-line-format   nil
+                    header-line-format nil
+                    cursor-type        nil
+                    truncate-lines     t
+                    word-wrap          nil
+                    scroll-margin      0)
+        (erase-buffer)
+        (insert content)))
+
+    (let ((root-win (frame-root-window frame)))
+      (set-window-fringes root-win 0 0 nil t)
+      (set-window-buffer  root-win buf))
+
+    (with-selected-frame frame
+      (let* (
+             ;; (line-count (max 1 (with-current-buffer buf
+             ;;                      (count-lines (point-min) (point-max)))))
+             (line-count (with-current-buffer buf
+                           (save-excursion
+                             (goto-char (point-max))
+                             (line-number-at-pos (point) t))))
+
+             (height     (max 3 (min 20 line-count))))
+        (set-frame-size frame (max 20 (min 40 (frame-width (selected-frame)))) height)
+        (make-frame-visible frame)))
+
+    frame))
+
+;;;
+;;; 補完候補の生成と補完ウィンドウ
 ;;;
 
 (defun ktn--format-completion-candidate (candidate base-string)
@@ -402,8 +546,69 @@ Each function is called with one argument: BASE-TEXT."
               (when (> (ktn-headword-completion-tab-count hw) 1)
                 (ktn--show-completion-window)))))))))
 
+
 ;;;
-;;; 辞書登録・アクション系
+;;; キー入力の正規化とディスパッチ
+;;;
+
+(defun ktn--normalize-input (ch keys)
+  "入力イベント CH とキーシーケンス KEYS を前裁きし、抽象化されたキーを返す。"
+  (let ((key-desc (and keys (key-description keys))))
+    (cond
+     ;; --- M-SPC / ESC SPC の揺らぎをすべて 'M-SPC に正規化 ---
+     ((or (and key-desc (or (equal key-desc "M-SPC")
+                            (equal key-desc "ESC SPC")
+                            (string-prefix-p "ESC" key-desc)))
+          (and (numberp ch) (= ch 32) keys (seq-contains-p keys 27))
+          (and (integerp ch) (= (logand ch #x3fff) 32) (not (= ch 32)))
+          (equal ch 134217760)) ; テスト等で渡る特定の値
+      'M-SPC)
+     
+     ;; --- 通常の数値やシンボルはそのまま返す ---
+     (t ch))))
+
+(defun ktn--lookup-dispatch (ch &optional keys)
+  "前裁きされたキーを基に `ktn-dispatch-table' を検索する（本体）。"
+  (let ((norm-key (ktn--normalize-input ch keys)))
+    (cl-find-if
+     (lambda (entry)
+       (let ((table-keys (car entry)))
+         (cl-some
+          (lambda (k)
+            (cond
+             ;; 1. 数値同士の比較
+             ((and (numberp k) (numberp norm-key) (= k norm-key))     t)
+             ;; 2. シンボルやその他の完全一致 (equal)
+             ((equal k norm-key)                                      t)
+             ;; 3. キーシーケンス（keys）との比較
+             ((and keys (equal k keys))                               t)
+             ;; 4. キーディスクリプション文字列の一致
+             ((and keys (stringp k) (equal k (key-description keys))) t)
+             (t nil)))
+          (if (listp table-keys) table-keys (list table-keys)))))
+     ktn-dispatch-table)))
+
+(defun ktn-handle-input ()
+  "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
+  (interactive)
+  (barf-if-buffer-read-only)
+  (let* ((ch      last-command-event)
+         (keys (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
+         (matched (ktn--lookup-dispatch ch keys)))
+    ;; (message "DEBUG: last-command-event = %S, this-command-keys = %s, matched = %S" ch keys matched) ; デバッグ用
+    (cond
+     (matched                   (call-interactively (cdr matched)))
+     ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
+     ((ktn--mode-p 'converting) (ktn--handle-converting-mode ch)                  (ktn--update-inline-display))
+
+     (t
+      (ktn--handle-normal-mode ch)
+      (when (ktn--mode-p 'headword)
+        (ktn--update-inline-display))))))
+
+
+;;;
+;;; 変換開始・確定・終了
 ;;;
 
 (defun ktn--prompt-dict-registration ()
@@ -432,6 +637,117 @@ Each function is called with one argument: BASE-TEXT."
             (insert user-word))
           (message "新しい単語を辞書に登録しました: [%s] -> %s" midasi user-word))
       (ktn-quit))))
+
+(defun ktn-completion-and-henkan ()
+  (interactive)
+  (ktn--headword-completion 1)
+  (call-interactively #'ktn-start-henkan))
+
+(defun ktn-start-henkan ()
+  "Start conversion or cycle through candidates with SPC."
+  (interactive)
+  (cond
+   ;;
+   ((ktn--mode-p 'headword)
+    (let ((hw ktn--current-headword))
+      (unless (string-empty-p (ktn-headword-roma-buffer hw))
+        (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
+              (ktn-headword-roma-buffer hw) ""))
+      (unless (string-empty-p (ktn-headword-okuri-roma-buffer hw))
+        (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw))
+              (ktn-headword-okuri-roma-buffer hw) ""))
+      (when (string-suffix-p "n" (ktn-headword-buffer hw))
+        (setf (ktn-headword-buffer hw) (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+      (let ((cands (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
+                       (ktn-search-jisyo-with-okuri-combined (ktn-headword-buffer hw)
+                                                             (ktn-headword-okuri-roma-first hw)
+                                                             (ktn-headword-okuri-buffer hw))
+                     (ktn-search-jisyo-combined (ktn-headword-buffer hw)))))
+        (if (not cands)
+            (ktn--prompt-dict-registration)
+          (setf (ktn-headword-henkan-count hw) 0
+                (ktn-headword-candidates hw) cands
+                (ktn-headword-candidate-index hw) 0
+                (ktn-headword-mode hw) 'converting)
+          (ktn--update-inline-display)))))
+   ;;
+   ((ktn--mode-p 'converting)
+    (let ((hw ktn--current-headword))
+      (setf (ktn-headword-henkan-count hw) (1+ (ktn-headword-henkan-count hw)))
+      (if (>= (1+ (ktn-headword-candidate-index hw))
+              (length (ktn-headword-candidates hw)))
+          (ktn--prompt-dict-registration)
+        (setf (ktn-headword-candidate-index hw) (1+ (ktn-headword-candidate-index hw)))
+        (ktn--update-inline-display)
+        (when (>= (ktn-headword-henkan-count hw)
+                  (1- ktn-show-candidates-nth-henkan))
+          (ktn--show-candidates-window)))))
+   ;;
+   (t (insert " "))))
+
+(defun ktn-kakutei ()
+  "Commit current headword or conversion result and insert into buffer."
+  (interactive)
+  (when ktn--current-headword
+    (ktn--kakutei-internal)))
+
+(defun ktn--kakutei-internal ()
+  (let* ((hw ktn--current-headword)
+         (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
+                     (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
+                   (ktn-headword-buffer hw)))
+         (base-text (if (ktn--mode-p 'converting)
+                        (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
+                      (concat (ktn-headword-buffer hw)
+                              (ktn-headword-roma-buffer hw)
+                              (ktn-headword-okuri-buffer hw))))
+         (p-proc (ktn-headword-post-processor hw))
+         (text (if (functionp p-proc)
+                   (funcall p-proc base-text)
+                 base-text))
+         (pos (and (markerp (ktn-headword-start-marker hw))
+                   (marker-position (ktn-headword-start-marker hw)))))
+
+    (ktn--add-recent-history midasi)
+
+    (when (ktn--mode-p 'converting)
+      (let ((cands-hash (gethash midasi ktn--stats-data)))
+        (unless cands-hash
+          (setq cands-hash (make-hash-table :test 'equal))
+          (puthash midasi cands-hash ktn--stats-data))
+        (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
+        (ktn-save-stats)))
+
+    (setf (ktn-headword-post-processor hw) nil)
+    (ktn--cleanup-headword)
+    (when pos
+      (goto-char pos)
+      (insert text))
+
+    (run-hook-with-args 'ktn-kakutei-hook base-text)))
+
+(defun ktn-quit ()
+  "Cancel current input sequence or return from converting to headword mode."
+  (interactive)
+  (cond
+   ((ktn--mode-p 'headword)
+    (ktn--cleanup-headword))
+
+   ((ktn--mode-p 'converting)
+    (let ((hw ktn--current-headword))
+      (setf (ktn-headword-mode hw) 'headword
+            (ktn-headword-candidates hw) nil
+            (ktn-headword-candidate-index hw) 0)
+      (message "")
+      (ktn--close-candidate-window-dispatch)
+      (ktn--update-inline-display)))
+
+   (t 
+    (keyboard-quit))))
+
+;;;
+;;; キーイベントハンドラ
+;;;
 
 (defun ktn-return-key-handler ()
   "RET / C-m 打鍵時の処理"
@@ -498,162 +814,10 @@ Each function is called with one argument: BASE-TEXT."
    (t
     (delete-char -1))))
 
-(defun ktn--normalize-input (ch keys)
-  "入力イベント CH とキーシーケンス KEYS を前裁きし、抽象化されたキーを返す。"
-  (let ((key-desc (and keys (key-description keys))))
-    (cond
-     ;; --- M-SPC / ESC SPC の揺らぎをすべて 'M-SPC に正規化 ---
-     ((or (and key-desc (or (equal key-desc "M-SPC")
-                            (equal key-desc "ESC SPC")
-                            (string-prefix-p "ESC" key-desc)))
-          (and (numberp ch) (= ch 32) keys (seq-contains-p keys 27))
-          (and (integerp ch) (= (logand ch #x3fff) 32) (not (= ch 32)))
-          (equal ch 134217760)) ; テスト等で渡る特定の値
-      'M-SPC)
-     
-     ;; --- 通常の数値やシンボルはそのまま返す ---
-     (t ch))))
 
-(defun ktn--lookup-dispatch (ch &optional keys)
-  "前裁きされたキーを基に `ktn-dispatch-table' を検索する（本体）。"
-  (let ((norm-key (ktn--normalize-input ch keys)))
-    (cl-find-if
-     (lambda (entry)
-       (let ((table-keys (car entry)))
-         (cl-some
-          (lambda (k)
-            (cond
-             ;; 1. 数値同士の比較
-             ((and (numberp k) (numberp norm-key) (= k norm-key))     t)
-             ;; 2. シンボルやその他の完全一致 (equal)
-             ((equal k norm-key)                                      t)
-             ;; 3. キーシーケンス（keys）との比較
-             ((and keys (equal k keys))                               t)
-             ;; 4. キーディスクリプション文字列の一致
-             ((and keys (stringp k) (equal k (key-description keys))) t)
-             (t nil)))
-          (if (listp table-keys) table-keys (list table-keys)))))
-     ktn-dispatch-table)))
-
-(defun ktn-handle-input ()
-  "静的ディスパッチテーブルを活用した FSM 中央ディスパッチャ。"
-  (interactive)
-  (barf-if-buffer-read-only)
-  (let* ((ch      last-command-event)
-         (keys (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
-         (matched (ktn--lookup-dispatch ch keys)))
-    ;; (message "DEBUG: last-command-event = %S, this-command-keys = %s, matched = %S" ch keys matched) ; デバッグ用
-    (cond
-     (matched                   (call-interactively (cdr matched)))
-     ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
-     ((ktn--mode-p 'converting) (ktn--handle-converting-mode ch)                  (ktn--update-inline-display))
-
-     (t
-      (ktn--handle-normal-mode ch)
-      (when (ktn--mode-p 'headword)
-        (ktn--update-inline-display))))))
-
-(defun ktn-completion-and-henkan ()
-  (interactive)
-  (ktn--headword-completion 1)
-  (call-interactively #'ktn-start-henkan))
-
-(defun ktn-start-henkan ()
-  "Start conversion or cycle through candidates with SPC."
-  (interactive)
-  (cond
-   ((ktn--mode-p 'headword)
-    (let ((hw ktn--current-headword))
-      (unless (string-empty-p (ktn-headword-roma-buffer hw))
-        (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
-              (ktn-headword-roma-buffer hw) ""))
-      (unless (string-empty-p (ktn-headword-okuri-roma-buffer hw))
-        (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw))
-              (ktn-headword-okuri-roma-buffer hw) ""))
-      (when (string-suffix-p "n" (ktn-headword-buffer hw))
-        (setf (ktn-headword-buffer hw) (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
-      (let ((cands (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
-                       (ktn-search-jisyo-with-okuri-combined (ktn-headword-buffer hw)
-                                                             (ktn-headword-okuri-roma-first hw)
-                                                             (ktn-headword-okuri-buffer hw))
-                     (ktn-search-jisyo-combined (ktn-headword-buffer hw)))))
-        (if (not cands)
-            (ktn--prompt-dict-registration)
-          (setf (ktn-headword-henkan-count hw) 0
-                (ktn-headword-candidates hw) cands
-                (ktn-headword-candidate-index hw) 0
-                (ktn-headword-mode hw) 'converting)
-          (ktn--update-inline-display)))))
-   ((ktn--mode-p 'converting)
-    (let ((hw ktn--current-headword))
-      (setf (ktn-headword-henkan-count hw) (1+ (ktn-headword-henkan-count hw)))
-      (if (>= (1+ (ktn-headword-candidate-index hw))
-              (length (ktn-headword-candidates hw)))
-          (ktn--prompt-dict-registration)
-        (setf (ktn-headword-candidate-index hw) (1+ (ktn-headword-candidate-index hw)))
-        (ktn--update-inline-display)
-        (when (>= (ktn-headword-henkan-count hw)
-                  (1- ktn-show-candidates-nth-henkan))
-          (ktn--show-candidates-window)))))
-   (t (insert " "))))
-
-(defun ktn-kakutei ()
-  "Commit current headword or conversion result and insert into buffer."
-  (interactive)
-  (when ktn--current-headword
-    (ktn--kakutei-internal)))
-
-(defun ktn--kakutei-internal ()
-  (let* ((hw ktn--current-headword)
-         (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
-                     (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
-                   (ktn-headword-buffer hw)))
-         (base-text (if (ktn--mode-p 'converting)
-                        (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
-                      (concat (ktn-headword-buffer hw)
-                              (ktn-headword-roma-buffer hw)
-                              (ktn-headword-okuri-buffer hw))))
-         (p-proc (ktn-headword-post-processor hw))
-         (text (if (functionp p-proc)
-                   (funcall p-proc base-text)
-                 base-text))
-         (pos (and (markerp (ktn-headword-start-marker hw))
-                   (marker-position (ktn-headword-start-marker hw)))))
-
-    (ktn--add-recent-history midasi)
-
-    (when (ktn--mode-p 'converting)
-      (let ((cands-hash (gethash midasi ktn--stats-data)))
-        (unless cands-hash
-          (setq cands-hash (make-hash-table :test 'equal))
-          (puthash midasi cands-hash ktn--stats-data))
-        (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
-        (ktn-save-stats)))
-
-    (setf (ktn-headword-post-processor hw) nil)
-    (ktn--cleanup-headword)
-    (when pos
-      (goto-char pos)
-      (insert text))
-
-    (run-hook-with-args 'ktn-kakutei-hook base-text)))
-
-(defun ktn-quit ()
-  "Cancel current input sequence or return from converting to headword mode."
-  (interactive)
-  (cond
-   ((ktn--mode-p 'headword)
-    (ktn--cleanup-headword))
-   ((ktn--mode-p 'converting)
-    (let ((hw ktn--current-headword))
-      (setf (ktn-headword-mode hw) 'headword
-            (ktn-headword-candidates hw) nil
-            (ktn-headword-candidate-index hw) 0)
-      (message "")
-      (ktn--close-candidate-window)
-      (ktn--update-inline-display)))
-   (t 
-    (keyboard-quit))))
+;;;
+;;; 初期化
+;;;
 
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
