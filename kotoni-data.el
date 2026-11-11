@@ -181,8 +181,9 @@
             (null ktn--stats-data)
             (not (hash-table-p ktn--stats-data)))
     (let ((jisyo-path (or ktn-stats-file (expand-file-name "~/.jisyo.json"))))
-      (if (and jisyo-path (file-exists-p jisyo-path))
-          (condition-case nil
+      (if (and jisyo-path
+               (file-exists-p jisyo-path))
+          (condition-case err
               (progn
                 (with-temp-buffer
                   (insert-file-contents jisyo-path)
@@ -193,8 +194,11 @@
                   (setq ktn--stats-data (make-hash-table :test 'equal)))
                 (setq ktn--stats-loaded-p t))
             (error
+             (message "ktn: failed to load stats file %s: %S" jisyo-path err)
              (setq ktn--stats-data (make-hash-table :test 'equal))
              (setq ktn--stats-loaded-p t)))
+
+        (message "ktn: stats file not found: %s" jisyo-path)
         (setq ktn--stats-data (make-hash-table :test 'equal))
         (setq ktn--stats-loaded-p t))))
   t)
@@ -437,9 +441,10 @@
     (unless cands-hash
       (setq cands-hash (make-hash-table :test 'equal))
       (puthash midasi cands-hash ktn--stats-data))
+
     (puthash clean-word (1+ (gethash clean-word cands-hash 0)) cands-hash)
     (ktn-save-stats)
-    (message "辞書に登録しました: [%s] -> %s" midasi clean-word)))
+    (message "辞書登録: [%s] -> %s" midasi clean-word)))
 
 (provide 'kotoni-data)
 ;;; kotoni-data.el ends here
