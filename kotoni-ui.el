@@ -71,12 +71,16 @@ Each function is called with one argument: BASE-TEXT."
   :type 'boolean
   :group 'kotoni)
 
-(defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
-
-(defvar ktn-candidate-style 'child
+(defcustom ktn-candidate-style 'child
   "候補表示スタイル。
-nil = 従来版。*ktn-candidates* を開く
-'child = child frame 版")
+nil: 従来版。*ktn-candidates* を開く
+'child: child frame 版"
+  :type '(choice
+          (const :tag "従来版" nil)
+          (const :tag "child frame 版" child))
+  :group 'kotoni)
+
+(defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 
 (defvar ktn-lighter "")
 
