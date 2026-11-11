@@ -94,7 +94,8 @@
                        (input (nth 1 test))
                        (expected (nth 2 test)))
                    `(ert-deftest ,name ()
-                      (let ((result (ktn-e2e-test ,input)))
+                      (let* ((ktn-candidate-style nil)
+                             (result (ktn-e2e-test ,input)))
                         (should (string-match-p ,expected result))))))
                tests)))
 
