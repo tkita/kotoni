@@ -39,7 +39,7 @@
 (defvar ktn-dictionaries nil)
 
 ;;; ローマ字テーブル定義
-(defvar ktn-default-roma-table
+(defconst ktn-default-roma-table
   '(("a"    . "あ")     ("i"    . "い")      ("u"    . "う")     ("e"    . "え")     ("o"    . "お")
     ("ba"   . "ば")     ("bi"   . "び")      ("bu"   . "ぶ")     ("be"   . "べ")     ("bo"   . "ぼ") 
     ("bya"  . "びゃ")   ("byi"  . "びぃ")    ("byu"  . "びゅ")   ("bye"  . "びぇ")   ("byo"  . "びょ")   
@@ -144,6 +144,14 @@
       (setq ktn-roma-exact-hash  (ktn--build-roma-exact-hash  roma-table))
       (setq ktn-roma-prefix-hash (ktn--build-roma-prefix-hash roma-table)))))
 
+(defcustom ktn-user-roma-table nil
+  "User-defined Romaji-to-Kana conversion table."
+  :type '(repeat (cons string string))
+  :set (lambda (symbol value)
+         (set-default symbol value)
+         (ktn-setup-roma-table))
+  :group 'kotoni)
+
 (defun ktn--roma-table-get (roma)
   ;; "ka" => "か"
   ;; "nn" => "ん"
@@ -154,14 +162,6 @@
   ;; "ka" => t
   ;; "zz" => nil
   (gethash prefix ktn-roma-prefix-hash))
-
-(defcustom ktn-user-roma-table nil
-  "User-defined Romaji-to-Kana conversion table."
-  :type '(repeat (cons string string))
-  :set (lambda (symbol value)
-         (set-default symbol value)
-         (ktn-setup-roma-table))
-  :group 'kotoni)
 
 (defcustom ktn-auto-insert-paren t
   "Enable automatic insertion of closing brackets."
