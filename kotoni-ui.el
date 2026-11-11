@@ -841,13 +841,17 @@ nil: 従来版。*ktn-candidates* を開く
 ;;; 初期化
 ;;;
 
+(defvar ktn--setup-done-p nil
+  "Non-nil when the Kotoni runtime has been initialized.")
+
 (defun ktn-setup ()
   "Initialize Ktn tables and dictionary instances safely."
-  (when (fboundp #'ccc-setup)
-    (ccc-setup))
-
-  (when (ktn--load-stats)
-    (ktn--setup-internal)))
+  (unless ktn--setup-done-p
+    (when (fboundp #'ccc-setup)
+      (ccc-setup))
+    (ktn--load-stats)
+    (ktn--setup-internal)
+    (setq ktn--setup-done-p t)))
 
 (defun ktn--setup-internal ()
   (unless (and (boundp 'ktn-roma-exact-hash)

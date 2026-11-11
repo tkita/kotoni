@@ -200,8 +200,7 @@
 
         (message "ktn: stats file not found: %s" jisyo-path)
         (setq ktn--stats-data (make-hash-table :test 'equal))
-        (setq ktn--stats-loaded-p t))))
-  t)
+        (setq ktn--stats-loaded-p t)))))
 
 (defun ktn-save-stats ()
   "Save `ktn--stats-data` to JSON file."
