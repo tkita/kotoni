@@ -213,6 +213,25 @@
             (insert (json-encode ktn--stats-data))))
       (error (message "Failed to save ktn stats file: %s" err)))))
 
+(defun ktn--ensure-stats-entry (midasi)
+  "MIDASI に対応する統計ハッシュを返す。なければ作成する。"
+  (let ((entry (gethash midasi ktn--stats-data)))
+    (unless entry
+      (setq entry (make-hash-table :test 'equal))
+      (puthash midasi entry ktn--stats-data))
+    entry))
+
+(defun ktn--record-candidate-stat (midasi candidate)
+  "統計データに CANDIDATE を記録する。候補は `word` または `word;annotation` 形式。"
+  (let* ((entry (ktn--ensure-stats-entry midasi))
+         (candidate-key (or candidate "")))
+    (when (not (string-empty-p candidate-key))
+      (puthash candidate-key
+               (1+ (gethash candidate-key entry 0))
+               entry)
+      (ktn-save-stats)
+      candidate-key)))
+
 (defun ktn--message (format-string &rest args)
   "バッチモード（noninteractive）では何もせず、対話モード時のみ message を出力する。"
   (unless noninteractive
@@ -287,6 +306,15 @@
 
       (ktn--parse-candidate-items raw-cands))))
 
+
+(defun ktn--split-stat-candidate (candidate-key)
+  "統計データのキー `word;annotation` を `(word . annotation)` に分解する。"
+  (if (and (stringp candidate-key)
+           (string-match "^\\([^;]+\\);\\(.*\\)$" candidate-key))
+      (cons (match-string 1 candidate-key)
+            (match-string 2 candidate-key))
+    (cons candidate-key nil)))
+
 (defun ktn-search-jisyo-combined (midasi &optional is-okuri)
   (let ((seen (make-hash-table :test 'equal))
         result)
@@ -295,16 +323,21 @@
     (when-let* ((cands-hash (gethash midasi ktn--stats-data))
                 ((hash-table-p cands-hash)))
       (let (stat-list)
-        (maphash (lambda (word count)
-                   (push (cons word count) stat-list))
+        (maphash (lambda (candidate-key count)
+                   (push (cons candidate-key count) stat-list))
                  cands-hash)
-        (setq stat-list (sort stat-list (lambda (a b)
-                                          (> (cdr a) (cdr b)))))
+        (setq stat-list
+              (sort stat-list
+                    (lambda (a b)
+                      (> (cdr a) (cdr b)))))
         (dolist (item stat-list)
-          (let ((word (car item)))
+          (let* ((candidate-key (car item))
+                 (parsed        (ktn--split-stat-candidate candidate-key))
+                 (word          (car parsed))
+                 (annot         (cdr parsed)))
             (unless (gethash word seen)
               (puthash word t seen)
-              (push (list word nil 'user) result))))))
+              (push (list word annot 'user) result))))))
 
     ;; 2. 各辞書からシステム候補を構築
     (dolist (dict ktn-dictionaries)
@@ -327,16 +360,19 @@
     (when-let* ((cands-hash (gethash search-key ktn--stats-data))
                 ((hash-table-p cands-hash)))
       (let (lst)
-        (maphash (lambda (word count)
-                   (push (cons word count) lst))
+        (maphash (lambda (candidate-key count)
+                   (push (cons candidate-key count) lst))
                  cands-hash)
         (setq lst (sort lst (lambda (a b)
                               (> (cdr a) (cdr b)))))
         (dolist (item lst)
-          (let ((word (car item)))
+          (let* ((candidate-key (car item))
+                 (parsed (ktn--split-stat-candidate candidate-key))
+                 (word   (car parsed))
+                 (annot  (cdr parsed)))
             (unless (gethash word seen)
               (puthash word t seen)
-              (push (list word nil 'user) stat-candidates))))))
+              (push (list word annot 'user) stat-candidates))))))
 
     ;; 2. 辞書検索からシステム候補を構築（送り仮名を結合）
     (dolist (cand-cell (ktn-search-jisyo-combined search-key t))
@@ -436,15 +472,13 @@
 ;;;
 
 (defun ktn--register-word (midasi word &optional annotation)
-  (let* ((clean-word (if annotation (concat word ";" annotation) word))
-         (cands-hash (gethash midasi ktn--stats-data)))
-    (unless cands-hash
-      (setq cands-hash (make-hash-table :test 'equal))
-      (puthash midasi cands-hash ktn--stats-data))
-
-    (puthash clean-word (1+ (gethash clean-word cands-hash 0)) cands-hash)
-    (ktn-save-stats)
-    (message "辞書登録: [%s] -> %s" midasi clean-word)))
+  (let* ((base-word (or word ""))
+         (candidate-key (if annotation
+                           (concat base-word ";" annotation)
+                         base-word)))
+    (unless (string-empty-p candidate-key)
+      (ktn--record-candidate-stat midasi candidate-key)
+      (message "辞書登録: [%s] -> %s" midasi candidate-key))))
 
 (provide 'kotoni-data)
 ;;; kotoni-data.el ends here

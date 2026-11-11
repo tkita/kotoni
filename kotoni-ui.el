@@ -238,27 +238,50 @@ nil: 従来版。*ktn-candidates* を開く
       (with-selected-window win
         (fit-window-to-buffer win)))))
 
+(defun ktn--normalize-candidate-cell (cand)
+  "候補を `(word annotation source)` 形式に正規化する。"
+  (cond
+   ;; 既に期待形式
+   ((and (listp cand) (>= (length cand) 3))
+    (list (nth 0 cand) (nth 1 cand) (nth 2 cand)))
+
+   ;; "word;annotation" 形式
+   ((stringp cand)
+    (let* ((parsed (ktn--split-stat-candidate cand))
+           (word  (car parsed))
+           (annot (cdr parsed)))
+      (list word annot 'user)))
+
+   ;; cons 形式
+   ((consp cand)
+    (list (car cand) nil 'system))
+
+   ;; それ以外
+   (t
+    (list (format "%s" cand) nil 'system))))
+
 (defun ktn--show-candidates-window ()
   "変換候補ウィンドウを表示する。"
   (if (not (ktn--mode-p 'converting))
       (ktn--close-candidate-window)
-    (let* ((hw         ktn--current-headword)
-           (candidates (ktn-headword-candidates hw))
-           (total      (length candidates))
-           (page-size  (length ktn-select-keys))
-           (current-idx (ktn-headword-candidate-index hw))
+    (let* ((hw           ktn--current-headword)
+           (candidates   (ktn-headword-candidates hw))
+           (total        (length candidates))
+           (page-size    (length ktn-select-keys))
+           (current-idx  (ktn-headword-candidate-index hw))
            (current-page (/ current-idx page-size))
-           (start      (* current-page page-size))
-           (end        (min total (+ start page-size)))
+           (start        (* current-page page-size))
+           (end          (min total (+ start page-size)))
            parts)
       (when candidates
         (cl-loop for i from start below end
-                 for cand-cell = (nth i candidates)
+                 for cand-cell = (ktn--normalize-candidate-cell (nth i candidates))
                  for c-str = (nth 0 cand-cell)
                  for annot = (nth 1 cand-cell)
                  for source = (nth 2 cand-cell)
                  for source-marker = (if (eq source 'user) "+" " ")
-                 for display-str = (if (and annot (not (string-empty-p annot)))
+                 for display-str = (if (and annot
+                                            (not (string-empty-p annot)))
                                        (concat c-str ";" annot)
                                      c-str)
                  for key-char = (nth (- i start) ktn-select-keys)
@@ -715,12 +738,7 @@ nil: 従来版。*ktn-candidates* を開く
     (ktn--add-recent-history midasi)
 
     (when (ktn--mode-p 'converting)
-      (let ((cands-hash (gethash midasi ktn--stats-data)))
-        (unless cands-hash
-          (setq cands-hash (make-hash-table :test 'equal))
-          (puthash midasi cands-hash ktn--stats-data))
-        (puthash base-text (1+ (gethash base-text cands-hash 0)) cands-hash)
-        (ktn-save-stats)))
+      (ktn--record-candidate-stat midasi base-text))
 
     (setf (ktn-headword-post-processor hw) nil)
     (ktn--cleanup-headword)
