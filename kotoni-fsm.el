@@ -13,7 +13,10 @@
 (require 'cl-lib)
 (require 'kotoni-data)
 
-;;; データオブジェクト定義
+
+;;;
+;;; 状態変数とデータ構造
+;;;
 
 (defvar-local ktn--normal-roma-buffer ""
   "通常モード時の一時ローマ字バッファ")
@@ -46,6 +49,10 @@
 (defvar-local ktn--current-headword nil
   "現在アクティブな `ktn-headword` オブジェクトインスタンス。")
 
+
+;;;
+;;; 汎用ヘルパー
+;;;
 (defun ktn--mode-p (mode)
   (and ktn--current-headword
        (eq (ktn-headword-mode ktn--current-headword) mode)))
@@ -53,8 +60,6 @@
 (defun ktn--state-reset ()
   (setq ktn--current-headword nil)
   (setq ktn--normal-roma-buffer ""))
-
-;;; ヘルパー関数
 
 (defun ktn--to-char-int (ch)
   "入力文字 CH を安全に整数文字コードに変換する。"
@@ -106,13 +111,16 @@
           (cons char-str "")
         (cons old-roma char-str))))))
 
+
+;;;
+;;; 通常モードの処理
+;;;
+
 (defun ktn--reset-completion (hw)
   (setf (ktn-headword-completion-base      hw) nil
         (ktn-headword-completion-tab-count hw) 0
         (ktn-headword-completion-index     hw) 0
         (ktn-headword-completion-cands     hw) nil))
-
-;;; 各モードの入力ハンドラ
 
 (defun ktn--handle-normal-mode (ch)
   "通常モード時の入力処理"
@@ -141,6 +149,11 @@
           (when ktn-auto-insert-paren
             (ktn--insert-paren (car res)))))))))
 
+
+;;;
+;;; 記号・括弧処理
+;;;
+
 (defun ktn--insert-paren (opstr)
   "Insert corresponding closing bracket for OPSTR if `ktn-auto-insert-paren' is enabled."
   (when-let* ((paren (assoc opstr ktn-auto-paren-string-alist))
@@ -164,6 +177,10 @@
   "BASE の前後に OPEN-STR と CLOSE-STR を付与するプロセッサを返す。"
   #'(lambda (base)
       (concat open-str base close-str)))
+
+;;;
+;;; Headword モード
+;;;
 
 (defconst ktn-headword-action-table
   `((?\, . (lambda (hw) (ktn--handle-punctuation-trigger hw ",")))
@@ -248,6 +265,10 @@
               (ktn-headword-roma-buffer hw) (cdr res)))))))
 
 
+;;;
+;;; Converting モード
+;;;
+
 (defconst ktn-converting-action-table
   `((,#'(lambda (ch-int _ch)
           (ktn--upper-case-p ch-int))
@@ -318,8 +339,9 @@
                         (+ c #x60)
                       c))))
 
-;;; ライフサイクル管理関数
-
+;;;
+;;; 公開 API / 起動処理
+;;;
 (defun ktn--start-headword-mode ()
   "新しい `ktn-headword` オブジェクトを生成して初期化する。"
   (setq ktn--current-headword (ktn-headword--create :mode 'headword
