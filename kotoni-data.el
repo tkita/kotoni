@@ -315,48 +315,10 @@
             (match-string 2 candidate-key))
     (cons candidate-key nil)))
 
-(defun ktn-search-jisyo-combined (midasi &optional is-okuri)
-  (let ((seen (make-hash-table :test 'equal))
+(defun ktn--collect-stat-candidates (search-key &optional seen)
+  "統計データから候補を収集して `(word annot source)` のリストを返す。"
+  (let ((local-seen (or seen (make-hash-table :test 'equal)))
         result)
-
-    ;; 1. 統計データ（使用頻度順）からユーザー候補を構築
-    (when-let* ((cands-hash (gethash midasi ktn--stats-data))
-                ((hash-table-p cands-hash)))
-      (let (stat-list)
-        (maphash (lambda (candidate-key count)
-                   (push (cons candidate-key count) stat-list))
-                 cands-hash)
-        (setq stat-list
-              (sort stat-list
-                    (lambda (a b)
-                      (> (cdr a) (cdr b)))))
-        (dolist (item stat-list)
-          (let* ((candidate-key (car item))
-                 (parsed        (ktn--split-stat-candidate candidate-key))
-                 (word          (car parsed))
-                 (annot         (cdr parsed)))
-            (unless (gethash word seen)
-              (puthash word t seen)
-              (push (list word annot 'user) result))))))
-
-    ;; 2. 各辞書からシステム候補を構築
-    (dolist (dict ktn-dictionaries)
-      (dolist (c (ktn-dictionary-search dict midasi is-okuri))
-        (let ((word  (car c))
-              (annot (cdr c)))
-          (unless (gethash word seen)
-            (puthash word t seen)
-            (push (list word annot 'system) result)))))
-
-    ;; 3. 順序を反転して返す
-    (nreverse result)))
-
-(defun ktn-search-jisyo-with-okuri-combined (midasi okuri-first-roma okuri-kana)
-  (let* ((search-key (concat midasi okuri-first-roma))
-         (seen       (make-hash-table :test 'equal))
-         stat-candidates system-candidates)
-
-    ;; 1. 統計データ（使用頻度順）からユーザー候補を構築
     (when-let* ((cands-hash (gethash search-key ktn--stats-data))
                 ((hash-table-p cands-hash)))
       (let (lst)
@@ -367,25 +329,62 @@
                               (> (cdr a) (cdr b)))))
         (dolist (item lst)
           (let* ((candidate-key (car item))
-                 (parsed (ktn--split-stat-candidate candidate-key))
-                 (word   (car parsed))
-                 (annot  (cdr parsed)))
-            (unless (gethash word seen)
-              (puthash word t seen)
-              (push (list word annot 'user) stat-candidates))))))
+                 (parsed        (ktn--split-stat-candidate candidate-key))
+                 (word          (car parsed))
+                 (annot         (cdr parsed)))
+            (unless (gethash word local-seen)
+              (puthash word t local-seen)
+              (push (list word annot 'user) result))))))
+    (nreverse result)))
 
-    ;; 2. 辞書検索からシステム候補を構築（送り仮名を結合）
-    (dolist (cand-cell (ktn-search-jisyo-combined search-key t))
-      (let* ((word-orig (nth 0 cand-cell))
-             (annot     (nth 1 cand-cell))
-             (source    (nth 2 cand-cell))
-             (word      (concat word-orig okuri-kana)))
-        (unless (gethash word seen)
-          (puthash word t seen)
-          (push (list word annot source) system-candidates))))
+(defun ktn--collect-system-candidates (search-key seen &optional is-okuri)
+  "辞書データから候補を収集して `(word annot source)` のリストを返す。"
+  (let (result)
+    (dolist (dict ktn-dictionaries)
+      (dolist (c (ktn-dictionary-search dict search-key is-okuri))
+        (let* ((word  (car c))
+               (annot (cdr c)))
+          (unless (gethash word seen)
+            (puthash word t seen)
+            (push (list word annot 'system) result)))))
+    (nreverse result)))
 
-    ;; 3. ユーザー候補とシステム候補を結合して返す
-    (append (nreverse stat-candidates) (nreverse system-candidates))))
+(defun ktn--search-jisyo-common (midasi &optional okuri-first-roma okuri-kana)
+  (let* ((search-key (if okuri-first-roma
+                         (concat midasi okuri-first-roma)
+                       midasi))
+         (is-okuri   (not (null okuri-first-roma)))
+         (stat-seen  (make-hash-table :test 'equal))
+         (dict-seen  (make-hash-table :test 'equal))
+         (result-seen (make-hash-table :test 'equal))
+         (result nil))
+
+    ;; 統計
+    (dolist (cand (ktn--collect-stat-candidates search-key stat-seen))
+      (let ((word (car cand)))
+        (unless (gethash word result-seen)
+          (puthash word t result-seen)
+          (push cand result))))
+
+    ;; 辞書
+    (dolist (cand (ktn--collect-system-candidates search-key dict-seen is-okuri))
+      (let* ((word      (nth 0 cand))
+             (annot     (nth 1 cand))
+             (src       (nth 2 cand))
+             (final-word (if okuri-kana
+                             (concat word okuri-kana)
+                           word)))
+        (unless (gethash final-word result-seen)
+          (puthash final-word t result-seen)
+          (push (list final-word annot src) result))))
+
+    (nreverse result)))
+
+(defun ktn-search-jisyo-combined (midasi)
+  (ktn--search-jisyo-common midasi))
+
+(defun ktn-search-jisyo-with-okuri-combined (midasi okuri-first-roma okuri-kana)
+  (ktn--search-jisyo-common midasi okuri-first-roma okuri-kana))
 
 ;;;
 ;;; 見出し語の補完 (ktn辞書の trie_index を活用)
