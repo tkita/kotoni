@@ -55,10 +55,10 @@
   (setq ktn-stats-file (make-temp-file "ktn-stats" nil ".json"))
   (setq ktn-dictionaries nil)
   (setq ktn--stats-data (make-hash-table :test 'equal))
+  (setq ktn--setup-done-p nil)
   (ktn-setup)
-  (when (fboundp 'ktn-mode)
-    (ktn--silence
-      (ktn-mode 1))))
+  (ktn--silence
+   (ktn-mode 1)))
 
 (defun ktn-e2e-test (&rest actions)
   (let ((orig-jisyo ktn-jisyo-file)
