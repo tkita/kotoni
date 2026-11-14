@@ -73,8 +73,8 @@ Each function is called with one argument: BASE-TEXT."
 
 (defcustom ktn-candidate-style 'child
   "候補表示スタイル。
-nil: 従来版。*ktn-candidates* を開く
-'child: child frame 版"
+`nil': 従来版。*ktn-candidates* を開く
+`child': child frame 版"
   :type '(choice
           (const :tag "従来版" nil)
           (const :tag "child frame 版" child))
@@ -784,7 +784,10 @@ nil: 従来版。*ktn-candidates* を開く
                        (ktn-search-jisyo-with-okuri-combined (ktn-headword-buffer hw)
                                                              (ktn-headword-okuri-roma-first hw)
                                                              (ktn-headword-okuri-buffer hw))
-                     (ktn-search-jisyo-combined (ktn-headword-buffer hw)))))
+                     (if (fboundp 'ktn--search-jisyo)
+                         (ktn--search-jisyo (ktn-headword-buffer hw))
+                       (ktn-search-jisyo-combined (ktn-headword-buffer hw)))
+                     )))
         (if (not cands)
             (ktn--prompt-dict-registration)
           (setf (ktn-headword-henkan-count hw) 0

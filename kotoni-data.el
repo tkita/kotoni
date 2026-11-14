@@ -355,19 +355,20 @@
     str))
 
 (defun ktn--lookup-candidates (input-str)
-  (let* ((query (ktn--normalize-search-query input-str))
-         (cands (ktn-search-jisyo-combined query)))
-    cands))
+  (let* ((query (ktn--normalize-search-query input-str)))
+    (if (fboundp 'ktn--search-jisyo)
+        (ktn--search-jisyo query)
+      (ktn-search-jisyo-combined query))))
 
 (defun ktn--search-jisyo-common (midasi &optional okuri-first-roma okuri-kana)
-  (let* ((search-key (if okuri-first-roma
-                         (concat midasi okuri-first-roma)
-                       midasi))
-         (is-okuri   (not (null okuri-first-roma)))
-         (stat-seen  (make-hash-table :test 'equal))
-         (dict-seen  (make-hash-table :test 'equal))
+  (let* ((search-key  (if okuri-first-roma
+                          (concat midasi okuri-first-roma)
+                        midasi))
+         (is-okuri    (not (null okuri-first-roma)))
+         (stat-seen   (make-hash-table :test 'equal))
+         (dict-seen   (make-hash-table :test 'equal))
          (result-seen (make-hash-table :test 'equal))
-         (result nil))
+         result)
 
     ;; 統計
     (dolist (cand (ktn--collect-stat-candidates search-key stat-seen))
