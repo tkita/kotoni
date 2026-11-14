@@ -475,15 +475,42 @@ Each function is called with one argument: BASE-TEXT."
 
   ktn--candidate-child-frame)
 
+;; (defun ktn--position-candidate-child-frame (frame)
+;;   (let* ((posn (posn-at-point (point)))
+;;          (xy   (and posn (posn-x-y posn))))
+;;     (if xy
+;;         (set-frame-position frame
+;;                             (+ (car xy) 16)
+;;                             (+ (cdr xy) 20))
+;;       ;; フォールバック
+;;       (set-frame-position frame 40 40))))
+
 (defun ktn--position-candidate-child-frame (frame)
-  (let* ((posn (posn-at-point (point)))
-         (xy   (and posn (posn-x-y posn))))
-    (if xy
-        (set-frame-position frame
-                            (+ (car xy) 16)
-                            (+ (cdr xy) 20))
-      ;; フォールバック
-      (set-frame-position frame 40 40))))
+  (let* ((posn      (posn-at-point (point)))
+         (win       (and posn (posn-window posn)))
+         (xy        (and posn (posn-x-y posn)))
+         (mb        (active-minibuffer-window))
+         (mb-edges  (and mb (window-pixel-edges mb)))
+         (mb-left   (and mb-edges (nth 0 mb-edges)))
+         (mb-top    (and mb-edges (nth 1 mb-edges)))
+         (win-edges (and win (window-pixel-edges win)))
+         (win-left  (and win-edges (nth 0 win-edges)))
+         (win-top   (and win-edges (nth 1 win-edges))))
+    (cond
+     ;; minibuffer にいるときは、その上に出す
+     ((and mb-edges win (window-minibuffer-p win))
+      (let* ((x (+ (or mb-left 0) (or (car xy) 0) 16))
+             (y (- (or mb-top 0) (frame-pixel-height frame) 8)))
+        (set-frame-position frame x y)))
+
+     ;; 通常の window 内
+     ((and win-edges xy)
+      (set-frame-position frame
+                          (+ (or win-left 0) (car xy) 16)
+                          (+ (or win-top 0) (cdr xy) 20)))
+
+     (t
+      (set-frame-position frame 40 40)))))
 
 (defun ktn--render-candidate-window-child (parts total current-page)
   (let* ((buf        (ktn--get-or-create-candidate-buffer))
