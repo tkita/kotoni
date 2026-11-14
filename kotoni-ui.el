@@ -80,6 +80,11 @@ nil: 従来版。*ktn-candidates* を開く
           (const :tag "child frame 版" child))
   :group 'kotoni)
 
+(defcustom ktn-enable-live-conversion t
+  "非nilの場合、▽モードで SPC 打鍵前に漢字候補を表示する。"
+  :type 'boolean
+  :group 'kotoni)
+
 (defvar ktn-select-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7))
 
 (defvar ktn-lighter "")
@@ -89,22 +94,6 @@ nil: 従来版。*ktn-candidates* を開く
 (defvar ktn--candidate-child-frame nil
   "Frame used for the candidate popup child window.")
 
-(defconst ktn--candidate-style-table
-  '((nil   . (ktn--render-candidate-window       . ktn--close-candidate-window))
-    (child . (ktn--render-candidate-window-child . ktn--close-candidate-window-child))))
-
-(defconst ktn-dispatch-table
-  '((( C-g  7                     ) . ktn-quit)
-    (( C-h  8                     ) . ktn-backspace-handler)
-    (( C-j 10                     ) . ktn-kakutei)
-    (( C-m 13 RET return [return] ) . ktn-return-key-handler)
-    (( SPC 32                     ) . ktn-start-henkan)
-    (( M-SPC                      ) . ktn-completion-and-henkan) ; ktn--normalize-input() で正規化
-    (( TAB tab [tab] ?\t          ) . ktn-tab-key-handler)
-    (( <backtab> backtab S-TAB    ) . ktn-backtab-key-handler)
-    (( <prior>   prior            ) . ktn-prior-page) ; PgUp
-    (( <next>    next             ) . ktn-next-page)) ; PgDn
-  "キーイベントディスパッチテーブル。")
 
 ;;;
 ;;; カーソル・バッファ・ウィンドウ管理の共通ヘルパー
@@ -155,17 +144,16 @@ nil: 従来版。*ktn-candidates* を開く
            (display-headword (concat "▽" input-str))
            (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
                 (ktn--ensure-completion-cands hw input-str)))
-           (preview-suffix (ktn--get-current-completion-suffix)))
-      (if (and preview-suffix
-               (not (string-empty-p preview-suffix)))
-          (progn
-            (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                         (propertize display-headword 'face 'ktn-headword-face))
-            (overlay-put (ktn-headword-headword-overlay hw) 'after-string
-                         (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))
-        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                     (propertize display-headword 'face 'ktn-headword-face))
-        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))
+           (preview-suffix (if ktn-enable-live-conversion
+                               ""       ; live-conversionなときは、見出し語補完は非表示
+                             (ktn--get-current-completion-suffix))))
+
+      (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                   (propertize display-headword 'face 'ktn-headword-face))
+      (overlay-put (ktn-headword-headword-overlay hw) 'after-string
+                   (if (and preview-suffix
+                            (not (string-empty-p preview-suffix)))
+                       (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))))
 
    ;; --- ▼ 変換モード ---
    ((ktn--mode-p 'converting)
@@ -199,9 +187,89 @@ nil: 従来版。*ktn-candidates* を開く
 
 (defun ktn--update-inline-display ()
   "インライン表示の更新を行うメイン関数。"
-  (ktn--manage-headword-overlay)
-  (when (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting))
-    (ktn--render-inline-content)))
+    (ktn--manage-headword-overlay)
+    (when (memq (and ktn--current-headword
+                     (ktn-headword-mode ktn--current-headword))
+                '(headword converting))
+      (ktn--render-inline-content)
+      (and (null noninteractive)
+           (ktn--mode-p 'headword)
+           ktn-enable-live-conversion
+           (ktn--show-live-conversion-child))))
+
+(defun ktn--show-live-conversion ()
+  ;; ▽モードにおける見出し語入力中
+  ;;   いま入力中のひらがな文字列をキーとして漢字候補を表示する
+  (let* ((hw        ktn--current-headword)
+         (input-str (and hw
+                         (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))))
+    (if (or (not input-str)
+            (string-empty-p input-str))
+        (message "")
+
+      ;; 辞書から候補を検索
+      (let ((cands (ktn-search-jisyo-combined input-str)))
+        (if (null cands)
+            (message "候補なし: %s" input-str)
+
+          ;; 候補をリストアップ（例: 最大10件）
+          (let* ((display-cands (cl-subseq cands 0 (min 10 (length cands))))
+                 (c-strs        (mapcar (lambda (c)
+                                          (if (consp c)
+                                              (car c)
+                                            c))
+                                        display-cands))
+                 ;; 改行区切りで連結して message 表示
+                 (msg-content (string-join c-strs "\n")))
+            (message "--- ライブ変換候補 (%s) ---\n%s" input-str msg-content)))))))
+
+(defun ktn--show-live-conversion-child ()
+  "▽モードにおける見出し語入力中、入力中の文字列に対する辞書候補の上位数件を child frame に表示する。"
+  (let* ((hw        ktn--current-headword)
+         (input-str (and hw
+                         (concat (ktn-headword-buffer hw)
+                                 (ktn-headword-roma-buffer hw)))))
+    (if (or (not input-str)
+            (string-empty-p input-str))
+        (ktn--close-candidate-window-child)
+
+      (let* ((cands         (ktn--lookup-candidates input-str))
+             (limited-cands (and cands
+                                 (cl-subseq cands 0 (min 5 (length cands)))))
+             (lines         (mapcar (lambda (c)
+                                      (let* ((word  (nth 0 c))
+                                             (annot (nth 1 c)))
+                                        (if (and annot (not (string-empty-p annot)))
+                                            (format " %s;%s" word annot)
+                                          (format " %s" word))))
+                                    limited-cands)))
+        (if (null lines)
+            (ktn--close-candidate-window-child)
+          (let* ((content  (string-join lines "\n"))
+                 (buf      (ktn--get-or-create-candidate-buffer))
+                 (frame    (ktn--ensure-candidate-child-frame))
+                 (root-win (frame-root-window frame))
+                 (height   (max 1 (min 5 (length lines)))))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (setq-local mode-line-format   nil
+                            header-line-format nil
+                            cursor-type        nil
+                            truncate-lines     t
+                            word-wrap          nil
+                            scroll-margin      0)
+                (erase-buffer)
+                (insert content)))
+            (set-frame-parameter frame 'alpha '(70 70))
+            (set-window-fringes root-win 0 0 nil t)
+            (set-window-buffer  root-win buf)
+
+            (ktn--position-candidate-child-frame frame)
+            (set-frame-size frame
+                            (max 20 (min 40 (frame-width (selected-frame))))
+                            height)
+            (make-frame-visible frame)))))))
+
 
 ;;;
 ;;; 候補ウィンドウの描画と位置制御
@@ -345,6 +413,10 @@ nil: 従来版。*ktn-candidates* を開く
 ;;; 候補ウィンドウの別実装/フレーム制御
 ;;;
 
+(defconst ktn--candidate-style-table
+  '((nil   . (ktn--render-candidate-window       . ktn--close-candidate-window))
+    (child . (ktn--render-candidate-window-child . ktn--close-candidate-window-child))))
+
 (defun ktn--candidate-style-entry ()
   (or (assoc ktn-candidate-style ktn--candidate-style-table)
       (assoc nil                 ktn--candidate-style-table)))
@@ -371,7 +443,8 @@ nil: 従来版。*ktn-candidates* を開く
              (internal-border-width . 2)
              (background-color      . "#fff3b0")
              (foreground-color      . "#222222")
-             (alpha                 . (90 90))))
+             ;; (alpha                 . (90 90)))
+           ))
     (set-frame-parameter frame (car spec) (cdr spec)))
   (when (frame-live-p frame)
     (let ((win (frame-root-window frame)))
@@ -381,24 +454,23 @@ nil: 従来版。*ktn-candidates* を開く
   "候補表示用 child frame を作成または再利用する。"
   (unless (and (frame-live-p ktn--candidate-child-frame)
                (frame-parameter ktn--candidate-child-frame 'parent-frame))
-    (setq ktn--candidate-child-frame
-          (make-frame
-           `((name        . "")
-             (title       . "")
-             (undecorated . t)
-             (minibuffer . nil)
-             (parent-frame . ,(selected-frame))
-             (internal-border-width . 2)
-             (border-width . 0)
-             (vertical-scroll-bars . nil)
-             (horizontal-scroll-bars . nil)
-             (menu-bar-lines . 0)
-             (tool-bar-lines . 0)
-             (unsplittable . t)
-             (no-accept-focus . t)
-             (visibility . nil)
-             (cursor-type . nil))))
-    (ktn--setup-candidate-frame   ktn--candidate-child-frame)
+    (setq ktn--candidate-child-frame (make-frame
+                                      `((name                   . "")
+                                        (title                  . "")
+                                        (undecorated            . t)
+                                        (minibuffer             . nil)
+                                        (parent-frame           . ,(selected-frame))
+                                        (internal-border-width  . 2)
+                                        (border-width           . 0)
+                                        (vertical-scroll-bars   . nil)
+                                        (horizontal-scroll-bars . nil)
+                                        (menu-bar-lines         . 0)
+                                        (tool-bar-lines         . 0)
+                                        (unsplittable           . t)
+                                        (no-accept-focus        . t)
+                                        (visibility             . nil)
+                                        (cursor-type            . nil))))
+    (ktn--setup-candidate-frame          ktn--candidate-child-frame)
     (ktn--position-candidate-child-frame ktn--candidate-child-frame))
 
   ktn--candidate-child-frame)
@@ -440,6 +512,7 @@ nil: 従来版。*ktn-candidates* を開く
 
     (let ((root-win (frame-root-window frame)))
       (set-window-fringes root-win 0 0 nil t)
+      (set-frame-parameter frame 'alpha '(90 90))
       (set-window-buffer  root-win buf))
 
     (with-selected-frame frame
@@ -546,8 +619,10 @@ nil: 従来版。*ktn-candidates* を開く
   "見出し語入力中の補完処理。"
   (interactive)
   (let ((d (or delta 1)))
+    ;; いま入力中の見出し語が辞書に存在すれば（送り仮名が未入力のときだけ）
     (when (and ktn--current-headword
                (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
+
       (let* ((hw ktn--current-headword)
              (raw-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))))
         (unless (ktn-headword-completion-base hw)
@@ -571,12 +646,26 @@ nil: 従来版。*ktn-candidates* を開く
                     (ktn-headword-roma-buffer hw) "")
               (ktn--update-inline-display)
               (when (> (ktn-headword-completion-tab-count hw) 1)
+                (ktn--close-candidate-window-child)
                 (ktn--show-completion-window)))))))))
 
 
 ;;;
 ;;; キー入力の正規化とディスパッチ
 ;;;
+
+(defconst ktn-dispatch-table
+  '((( C-g  7                     ) . ktn-quit)
+    (( C-h  8                     ) . ktn-backspace-handler)
+    (( C-j 10                     ) . ktn-kakutei)
+    (( C-m 13 RET return [return] ) . ktn-return-key-handler)
+    (( SPC 32                     ) . ktn-start-henkan)
+    (( M-SPC                      ) . ktn-completion-and-henkan) ; ktn--normalize-input() で正規化
+    (( TAB tab [tab] ?\t          ) . ktn-tab-key-handler)
+    (( <backtab> backtab S-TAB    ) . ktn-backtab-key-handler)
+    (( <prior>   prior            ) . ktn-prior-page) ; PgUp
+    (( <next>    next             ) . ktn-next-page)) ; PgDn
+  "キーイベントに割り当てる関数。ktn-handle-input() で使用。")
 
 (defun ktn--normalize-input (ch keys)
   "入力イベント CH とキーシーケンス KEYS を前裁きし、抽象化されたキーを返す。"
@@ -620,9 +709,8 @@ nil: 従来版。*ktn-candidates* を開く
   (interactive)
   (barf-if-buffer-read-only)
   (let* ((ch      last-command-event)
-         (keys (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
+         (keys    (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
          (matched (ktn--lookup-dispatch ch keys)))
-    ;; (message "DEBUG: last-command-event = %S, this-command-keys = %s, matched = %S" ch keys matched) ; デバッグ用
     (cond
      (matched                   (call-interactively (cdr matched)))
      ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
@@ -677,14 +765,21 @@ nil: 従来版。*ktn-candidates* を開く
    ;;
    ((ktn--mode-p 'headword)
     (let ((hw ktn--current-headword))
+      ;; ローマ字バッファに入力が残っていれば、それを本体バッファに吸収する
       (unless (string-empty-p (ktn-headword-roma-buffer hw))
         (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
               (ktn-headword-roma-buffer hw) ""))
+
+      ;; 送り仮名のローマ字バッファに入力が残っていれば、それを本体送りバッファへ反映する
       (unless (string-empty-p (ktn-headword-okuri-roma-buffer hw))
         (setf (ktn-headword-okuri-buffer hw) (concat (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw))
               (ktn-headword-okuri-roma-buffer hw) ""))
+
+      ;; 「ん」補正: 末尾が "n" のとき "ん" に直す
       (when (string-suffix-p "n" (ktn-headword-buffer hw))
         (setf (ktn-headword-buffer hw) (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+
+
       (let ((cands (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
                        (ktn-search-jisyo-with-okuri-combined (ktn-headword-buffer hw)
                                                              (ktn-headword-okuri-roma-first hw)

@@ -10,7 +10,7 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 
 ## スクリーンショット
 
-![Kotoni Operation Screenshot](screenshot.png)
+![Kotoni Operation Screenshot](img/screenshot.png)
 
 ---
 
@@ -23,8 +23,8 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
   * 機能拡張や保守が容易。E2Eテストを同梱。
 
 - 自動 off 機能:
-  * プログラミング系メジャーモードにおいて、カーソル（ポイント）がコメント or 文字列の「外」に出たら、自動で off するメジャーモード `kotoni-auto.el` を同梱。
-    + (derived-mode-p 'prog-mode) が t なメジャーモード
+  * プログラミング系メジャーモードにおいて、カーソル（ポイント）がコメント or 文字列の「外」に出たら、自動で off するマイナーモード `kotoni-auto.el` を同梱。
+    + (derived-mode-p 'prog-mode) が t なメジャーモードと連携
 
 - そのほか:
   * 機能不足: DDSKK と比べ、まったく足りてません。
@@ -118,11 +118,31 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
   - 走った
 
 ### 見出し語の補完機能
+
+▽モードでは、入力されていくかな文字に応じてインクリメンタルに「見出し語補完」が行われます。`ktn--render-inline-content()`
+
 | 操作・入力            | 挙動                                                                     |
 | :-------------------- | :----------------------------------------------------------------------- |
 | `TAB` / `<tab>`       | ▽モード時に前方一致する見出し語を**順方向**に補完・候補一覧表示します。 |
 | `<backtab>` / `S-TAB` | ▽モード時に補完候補を**逆方向**に巡回します。                           |
 | `<meta>-SPC`      | 補完し、変換します（TAB 押して, SPC 押すよりも気軽な気がします）                 |
+
+- 補完のソースは辞書です。
+
+- 見出し語の入力と連動し、辞書内の見出し語と一致するものが補完表示されます。
+
+    M a t i d a ※「おだきゅう」が補完される
+    ![comp1](img/comp1.png)
+
+    M a t i d a k a ※ 補完を無視し、そのまま続けることも可。インクリメンタルに補完されます。
+    ![comp2](img/comp2.png)
+
+    M a t i d a TAB ※ `TAB` で補完を採用。`SPC` で漢字変換。
+
+    M a t i d a TAB TAB ※ `SPC` ではなく、続けてもういちど `TAB` を押すと、エコーエリアに列挙されます。
+    ![comp3](img/comp3.png)
+
+    `TAB` と `S-TAB` で選択し、`SPC` で漢字変換してください。
 
 ### 変換中の候補選択
 | 操作・入力                               | 挙動 |
@@ -131,6 +151,14 @@ https://ja.wikipedia.org/wiki/%E7%90%B4%E4%BC%BC
 | `SPC`                                    | 次の候補へ進みます。候補を出し切ると辞書登録プロンプトへ移行します。 |
 | `x` / `X`                                | 前の候補へ戻ります（最初の候補で押すと▽モードに戻ります）。         |
 | `<next>` (PageDown) / `<prior>` (PageUp) | 候補のページを次/前へ送ります。                                      |
+
+### ライブ変換
+
+- **`ktn-enable-live-conversion`**: `t` の場合、見出し語の入力と連動し、「いま `SPC` 打鍵したら」が Child Frame で表示されます。
+![live1](img/live1.png)
+
+画面表示上は、見出し語の補完 (overlay) よりも、ライブ変換 (Child Frame) を優先しますが、`TAB` による見出し語の補完は有効です。
+
 
 ### 辞書登録
 辞書にヒットしない状態で `SPC` を押すか候補を出し切ると、ミニバッファで新しい単語の登録プロンプトが起動します。

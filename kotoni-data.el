@@ -348,6 +348,17 @@
             (push (list word annot 'system) result)))))
     (nreverse result)))
 
+(defun ktn--normalize-search-query (str)
+  "検索クエリ STR の末尾が `n' の場合、`ん' に置換した文字列を返す。"
+  (if (and str (string-suffix-p "n" str))
+      (concat (substring str 0 -1) "ん")
+    str))
+
+(defun ktn--lookup-candidates (input-str)
+  (let* ((query (ktn--normalize-search-query input-str))
+         (cands (ktn-search-jisyo-combined query)))
+    cands))
+
 (defun ktn--search-jisyo-common (midasi &optional okuri-first-roma okuri-kana)
   (let* ((search-key (if okuri-first-roma
                          (concat midasi okuri-first-roma)
