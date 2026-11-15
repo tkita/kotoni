@@ -94,6 +94,38 @@ Each function is called with one argument: BASE-TEXT."
 (defvar ktn--candidate-child-frame nil
   "Frame used for the candidate popup child window.")
 
+;;;
+;;; State helpers
+;;;
+
+(defun ktn--headword-current ()
+  "現在の見出し語オブジェクトを返す。未設定なら nil。"
+  (when (boundp 'ktn--current-headword)
+    ktn--current-headword))
+
+(defun ktn--headword-mode-p (&rest modes)
+  "現在の見出し語の mode が MODES のいずれかなら t。"
+  (let ((hw (ktn--headword-current)))
+    (and hw
+         (memq (ktn-headword-mode hw) modes))))
+
+(defun ktn--active-headword-p ()
+  "見出し語入力中または変換中なら t。"
+  (or (ktn--headword-mode-p 'headword)
+      (ktn--headword-mode-p 'converting)))
+
+(defun ktn--current-input-string (&optional hw)
+  "現在の入力文字列を返す。"
+  (let* ((hw (or hw (ktn--headword-current)))
+         (okuri-first (and hw (ktn-headword-okuri-roma-first hw))))
+    (when hw
+      (concat (ktn-headword-buffer hw)
+              (ktn-headword-roma-buffer hw)
+              (unless (string-empty-p okuri-first)
+                "*")
+              (ktn-headword-okuri-buffer hw)
+              (ktn-headword-okuri-roma-buffer hw)))))
+
 
 ;;;
 ;;; カーソル・バッファ・ウィンドウ管理の共通ヘルパー
@@ -117,12 +149,12 @@ Each function is called with one argument: BASE-TEXT."
     (delete-windows-on buf)))
 
 (defun ktn--cleanup-headword ()
-  (when ktn--current-headword
-    (when (overlayp (ktn-headword-headword-overlay ktn--current-headword))
-      (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
-      (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
-    (when (markerp (ktn-headword-start-marker ktn--current-headword))
-      (setf (ktn-headword-start-marker ktn--current-headword) nil)))
+  (when-let ((hw (ktn--headword-current)))
+    (when (overlayp (ktn-headword-headword-overlay hw))
+      (delete-overlay (ktn-headword-headword-overlay hw))
+      (setf (ktn-headword-headword-overlay hw) nil))
+    (when (markerp (ktn-headword-start-marker hw))
+      (setf (ktn-headword-start-marker hw) nil)))
   (ktn--close-candidate-window)
   (ktn--close-candidate-window-dispatch)
   (setq ktn--normal-roma-buffer "")
@@ -134,75 +166,71 @@ Each function is called with one argument: BASE-TEXT."
 
 (defun ktn--render-inline-content ()
   "▽モードおよび▼モードにおける表示内容を構築し、オーバーレイに適用する。"
-  (cond
-   ;; --- ▽ 見出し語入力モード ---
-   ((ktn--mode-p 'headword)
-    (let* ((hw ktn--current-headword)
-           (input-str (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-                              (unless (string-empty-p (ktn-headword-okuri-roma-first hw)) "*")
-                              (ktn-headword-okuri-buffer hw) (ktn-headword-okuri-roma-buffer hw)))
-           (display-headword (concat "▽" input-str))
-           (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
-                (ktn--ensure-completion-cands hw input-str)))
-           (preview-suffix (if ktn-enable-live-conversion
-                               ""       ; live-conversionなときは、見出し語補完は非表示
-                             (ktn--get-current-completion-suffix))))
+  (let ((hw (ktn--headword-current)))
+    (cond
+     ;; --- ▽ 見出し語入力モード ---
+     ((ktn--headword-mode-p 'headword)
+      (let* ((input-str (ktn--current-input-string hw))
+             (display-headword (concat "▽" input-str))
+             (_ (unless (> (ktn-headword-completion-tab-count hw) 0)
+                  (ktn--ensure-completion-cands hw input-str)))
+             (preview-suffix (if ktn-enable-live-conversion
+                                 "" ; live-conversionなときは、見出し語補完は非表示
+                               (ktn--get-current-completion-suffix))))
 
-      (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                   (propertize display-headword 'face 'ktn-headword-face))
-      (overlay-put (ktn-headword-headword-overlay hw) 'after-string
-                   (if (and preview-suffix
-                            (not (string-empty-p preview-suffix)))
-                       (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))))
+        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                     (propertize display-headword 'face 'ktn-headword-face))
+        (overlay-put (ktn-headword-headword-overlay hw) 'after-string
+                     (if (and preview-suffix
+                              (not (string-empty-p preview-suffix)))
+                         (propertize preview-suffix 'face 'ktn-completion-preview-face 'cursor t)))))
 
-   ;; --- ▼ 変換モード ---
-   ((ktn--mode-p 'converting)
-    (let* ((hw ktn--current-headword)
-           (cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
-           (cand-str (cond ((stringp cand) cand)
-                          ((consp cand) (or (car cand) (format "%s" cand)))
-                          ((listp cand) (format "%s" (car cand)))
-                          (t (format "%s" cand))))
-           (display-str (concat "▼" cand-str)))
-      (overlay-put (ktn-headword-headword-overlay hw) 'before-string
-                   (propertize display-str 'face 'ktn-headword-face))
-      (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil)))))
+     ;; --- ▼ 変換モード ---
+     ((ktn--headword-mode-p 'converting)
+      (let* ((cand (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
+             (cand-str (cond ((stringp cand) cand)
+                             ((consp cand) (or (car cand) (format "%s" cand)))
+                             ((listp cand) (format "%s" (car cand)))
+                             (t (format "%s" cand))))
+             (display-str (concat "▼" cand-str)))
+        (overlay-put (ktn-headword-headword-overlay hw) 'before-string
+                     (propertize display-str 'face 'ktn-headword-face))
+        (overlay-put (ktn-headword-headword-overlay hw) 'after-string nil))))))
 
 (defun ktn--manage-headword-overlay ()
   "現在のモードに応じてインラインオーバーレイの生成・削除・位置調整を行う。"
-  (if (not (memq (and ktn--current-headword (ktn-headword-mode ktn--current-headword)) '(headword converting)))
-      ;; 非アクティブ時はオーバーレイを削除
-      (when (and ktn--current-headword
-                 (overlayp (ktn-headword-headword-overlay ktn--current-headword)))
-        (delete-overlay (ktn-headword-headword-overlay ktn--current-headword))
-        (setf (ktn-headword-headword-overlay ktn--current-headword) nil))
+  (let ((hw (ktn--headword-current)))
+    (if (not (ktn--active-headword-p))
+        ;; 非アクティブ時はオーバーレイを削除
+        (when (and hw
+                   (overlayp (ktn-headword-headword-overlay hw)))
+          (delete-overlay (ktn-headword-headword-overlay hw))
+          (setf (ktn-headword-headword-overlay hw) nil))
 
     ;; アクティブ時はオーバーレイを現在位置に確保して追従させる
-    (unless (and ktn--current-headword 
-                 (overlayp (ktn-headword-headword-overlay ktn--current-headword)) 
-                 (overlay-buffer (ktn-headword-headword-overlay ktn--current-headword)))
+    (unless (and hw
+                 (overlayp (ktn-headword-headword-overlay hw))
+                 (overlay-buffer (ktn-headword-headword-overlay hw)))
       (let ((pos (point)))
-        (setf (ktn-headword-headword-overlay ktn--current-headword) (make-overlay pos pos nil t t))))
-    (move-overlay (ktn-headword-headword-overlay ktn--current-headword) (point) (point))))
+        (setf (ktn-headword-headword-overlay hw) (make-overlay pos pos nil t t))))
+    (move-overlay (ktn-headword-headword-overlay hw) (point) (point)))))
 
 (defun ktn--update-inline-display ()
   "インライン表示の更新を行うメイン関数。"
-    (ktn--manage-headword-overlay)
-    (when (memq (and ktn--current-headword
-                     (ktn-headword-mode ktn--current-headword))
-                '(headword converting))
-      (ktn--render-inline-content)
-      (and (null noninteractive)
-           (ktn--mode-p 'headword)
-           ktn-enable-live-conversion
-           (ktn--show-live-conversion-child))))
+  (ktn--manage-headword-overlay)
+  (when (ktn--active-headword-p)
+    (ktn--render-inline-content)
+    (and (null noninteractive)
+         (ktn--headword-mode-p 'headword)
+         ktn-enable-live-conversion
+         (ktn--show-live-conversion-child))))
 
 (defun ktn--show-live-conversion ()
   ;; ▽モードにおける見出し語入力中
   ;;   いま入力中のひらがな文字列をキーとして漢字候補を表示する
-  (let* ((hw        ktn--current-headword)
+  (let* ((hw        (ktn--headword-current))
          (input-str (and hw
-                         (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)))))
+                         (ktn--current-input-string hw))))
     (if (or (not input-str)
             (string-empty-p input-str))
         (message "")
@@ -225,10 +253,9 @@ Each function is called with one argument: BASE-TEXT."
 
 (defun ktn--show-live-conversion-child ()
   "▽モードにおける見出し語入力中、入力中の文字列に対する辞書候補の上位数件を child frame に表示する。"
-  (let* ((hw        ktn--current-headword)
+  (let* ((hw        (ktn--headword-current))
          (input-str (and hw
-                         (concat (ktn-headword-buffer hw)
-                                 (ktn-headword-roma-buffer hw)))))
+                         (ktn--current-input-string hw))))
     (if (or (not input-str)
             (string-empty-p input-str))
         (ktn--close-candidate-window-child)
@@ -330,9 +357,9 @@ Each function is called with one argument: BASE-TEXT."
 
 (defun ktn--show-candidates-window ()
   "変換候補ウィンドウを表示する。"
-  (if (not (ktn--mode-p 'converting))
+  (if (not (ktn--headword-mode-p 'converting))
       (ktn--close-candidate-window)
-    (let* ((hw           ktn--current-headword)
+    (let* ((hw           (ktn--headword-current))
            (candidates   (ktn-headword-candidates hw))
            (total        (length candidates))
            (page-size    (length ktn-select-keys))
@@ -363,10 +390,10 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-previous-candidate ()
   "Move to the previous conversion candidate."
   (interactive)
-  (when (ktn--mode-p 'converting)
-    (let* ((hw ktn--current-headword)
+  (when (ktn--headword-mode-p 'converting)
+    (let* ((hw    (ktn--headword-current))
            (total (length (ktn-headword-candidates hw)))
-           (idx (ktn-headword-candidate-index hw)))
+           (idx   (ktn-headword-candidate-index hw)))
       (when (> total 0)
         (setf (ktn-headword-candidate-index hw) (mod (1- idx) total))
         (ktn--update-inline-display)
@@ -375,10 +402,10 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-next-candidate ()
   "Move to the next conversion candidate."
   (interactive)
-  (when (ktn--mode-p 'converting)
-    (let* ((hw ktn--current-headword)
+  (when (ktn--headword-mode-p 'converting)
+    (let* ((hw    (ktn--headword-current))
            (total (length (ktn-headword-candidates hw)))
-           (idx (ktn-headword-candidate-index hw)))
+           (idx   (ktn-headword-candidate-index hw)))
       (when (> total 0)
         (setf (ktn-headword-candidate-index hw) (mod (1+ idx) total))
         (ktn--update-inline-display)
@@ -387,12 +414,12 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-next-page ()
   "Move to the next page of candidates."
   (interactive)
-  (when (ktn--mode-p 'converting)
-    (let* ((hw ktn--current-headword)
-           (total (length (ktn-headword-candidates hw)))
+  (when (ktn--headword-mode-p 'converting)
+    (let* ((hw        (ktn--headword-current))
+           (total     (length (ktn-headword-candidates hw)))
            (page-size (length ktn-select-keys))
-           (idx (ktn-headword-candidate-index hw))
-           (new-idx (min (1- total) (+ idx page-size))))
+           (idx       (ktn-headword-candidate-index hw))
+           (new-idx   (min (1- total) (+ idx page-size))))
       (setf (ktn-headword-candidate-index hw) new-idx)
       (ktn--update-inline-display)
       (ktn--show-candidates-window))))
@@ -400,8 +427,8 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-prior-page ()
   "Move to the previous page of candidates."
   (interactive)
-  (when (ktn--mode-p 'converting)
-    (let* ((hw ktn--current-headword)
+  (when (ktn--headword-mode-p 'converting)
+    (let* ((hw (ktn--headword-current))
            (page-size (length ktn-select-keys))
            (idx (ktn-headword-candidate-index hw))
            (new-idx (max 0 (- idx page-size))))
@@ -576,7 +603,7 @@ Each function is called with one argument: BASE-TEXT."
 
 (defun ktn--show-completion-window ()
   "見出し語の TAB 補完候補ウィンドウを表示する。"
-  (let* ((hw ktn--current-headword)
+  (let* ((hw       (ktn--headword-current))
          (cands    (and hw (ktn-headword-completion-cands hw)))
          (base-str (and hw (ktn-headword-completion-base hw))))
     (if (not cands)
@@ -601,13 +628,9 @@ Each function is called with one argument: BASE-TEXT."
         (ktn--render-candidate-window parts total current-page)))))
 
 (defun ktn--get-current-completion-suffix ()
-  (when-let* ((hw ktn--current-headword)
-              (current-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw)
-                                     (unless (string-empty-p (ktn-headword-okuri-roma-first hw))
-                                       "*")
-                                     (ktn-headword-okuri-buffer hw)
-                                     (ktn-headword-okuri-roma-buffer hw)))
-              ((ktn--mode-p 'headword))
+  (when-let* ((hw (ktn--headword-current))
+              (current-input (ktn--current-input-string hw))
+              ((ktn--headword-mode-p 'headword))
               ((string-empty-p (ktn-headword-okuri-roma-first hw)))
               ((not (string-empty-p current-input))))
     (unless (> (ktn-headword-completion-tab-count hw) 0)
@@ -647,34 +670,32 @@ Each function is called with one argument: BASE-TEXT."
   (interactive)
   (let ((d (or delta 1)))
     ;; いま入力中の見出し語が辞書に存在すれば（送り仮名が未入力のときだけ）
-    (when (and ktn--current-headword
-               (string-empty-p (ktn-headword-okuri-roma-first ktn--current-headword)))
+    (when-let ((hw (ktn--headword-current)))
+      (when (string-empty-p (ktn-headword-okuri-roma-first hw))
+        (let* ((raw-input (ktn--current-input-string hw)))
+          (unless (ktn-headword-completion-base hw)
+            (setf (ktn-headword-completion-base hw) raw-input
+                  (ktn-headword-completion-cands hw) (ktn--complete-search-headword raw-input)
+                  (ktn-headword-completion-index hw) 0))
 
-      (let* ((hw ktn--current-headword)
-             (raw-input (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))))
-        (unless (ktn-headword-completion-base hw)
-          (setf (ktn-headword-completion-base hw) raw-input
-                (ktn-headword-completion-cands hw) (ktn--complete-search-headword raw-input)
-                (ktn-headword-completion-index hw) 0))
-
-        (let ((cands (ktn-headword-completion-cands hw)))
-          (when (and cands (> (length cands) 0))
-            (let* ((total     (length cands))
-                   (tab-count (ktn-headword-completion-tab-count hw))
-                   (idx       (ktn-headword-completion-index hw))
-                   (new-idx (if (and (= tab-count 0)
-                                     (= d 1))
-                                idx
-                              (mod (+ idx d) total)))
-                   (chosen (nth new-idx cands)))
-              (setf (ktn-headword-completion-tab-count hw) (1+ tab-count)
-                    (ktn-headword-completion-index hw) new-idx
-                    (ktn-headword-buffer hw) chosen
-                    (ktn-headword-roma-buffer hw) "")
-              (ktn--update-inline-display)
-              (when (> (ktn-headword-completion-tab-count hw) 1)
-                (ktn--close-candidate-window-child)
-                (ktn--show-completion-window)))))))))
+          (let ((cands (ktn-headword-completion-cands hw)))
+            (when (and cands (> (length cands) 0))
+              (let* ((total     (length cands))
+                     (tab-count (ktn-headword-completion-tab-count hw))
+                     (idx       (ktn-headword-completion-index hw))
+                     (new-idx (if (and (= tab-count 0)
+                                       (= d 1))
+                                  idx
+                                (mod (+ idx d) total)))
+                     (chosen (nth new-idx cands)))
+                (setf (ktn-headword-completion-tab-count hw) (1+ tab-count)
+                      (ktn-headword-completion-index hw) new-idx
+                      (ktn-headword-buffer hw) chosen
+                      (ktn-headword-roma-buffer hw) "")
+                (ktn--update-inline-display)
+                (when (> (ktn-headword-completion-tab-count hw) 1)
+                  (ktn--close-candidate-window-child)
+                  (ktn--show-completion-window))))))))))
 
 
 ;;;
@@ -739,13 +760,13 @@ Each function is called with one argument: BASE-TEXT."
          (keys    (this-command-keys)) ; 実際に押されたキーのシーケンス（文字列またはベクタ）を取得
          (matched (ktn--lookup-dispatch ch keys)))
     (cond
-     (matched                   (call-interactively (cdr matched)))
-     ((ktn--mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
-     ((ktn--mode-p 'converting) (ktn--handle-converting-mode ch)                  (ktn--update-inline-display))
+     (matched                            (call-interactively (cdr matched)))
+     ((ktn--headword-mode-p 'headword)   (ktn--handle-headword-mode ch #'ktn-start-henkan) (ktn--update-inline-display))
+     ((ktn--headword-mode-p 'converting) (ktn--handle-converting-mode ch)                  (ktn--update-inline-display))
 
      (t
       (ktn--handle-normal-mode ch)
-      (when (ktn--mode-p 'headword)
+      (when (ktn--headword-mode-p 'headword)
         (ktn--update-inline-display))))))
 
 
@@ -754,7 +775,7 @@ Each function is called with one argument: BASE-TEXT."
 ;;;
 
 (defun ktn--prompt-dict-registration ()
-  (let* ((hw ktn--current-headword)
+  (let* ((hw (ktn--headword-current))
          (enable-recursive-minibuffers t)
          (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
                      (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
@@ -790,8 +811,8 @@ Each function is called with one argument: BASE-TEXT."
   (interactive)
   (cond
    ;;
-   ((ktn--mode-p 'headword)
-    (let ((hw ktn--current-headword))
+   ((ktn--headword-mode-p 'headword)
+    (let ((hw (ktn--headword-current)))
       ;; ローマ字バッファに入力が残っていれば、それを本体バッファに吸収する
       (unless (string-empty-p (ktn-headword-roma-buffer hw))
         (setf (ktn-headword-buffer hw) (concat (ktn-headword-buffer hw) (ktn-headword-roma-buffer hw))
@@ -823,8 +844,8 @@ Each function is called with one argument: BASE-TEXT."
                 (ktn-headword-mode hw) 'converting)
           (ktn--update-inline-display)))))
    ;;
-   ((ktn--mode-p 'converting)
-    (let ((hw ktn--current-headword))
+   ((ktn--headword-mode-p 'converting)
+    (let ((hw (ktn--headword-current)))
       (setf (ktn-headword-henkan-count hw) (1+ (ktn-headword-henkan-count hw)))
       (if (>= (1+ (ktn-headword-candidate-index hw))
               (length (ktn-headword-candidates hw)))
@@ -840,15 +861,15 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-kakutei ()
   "Commit current headword or conversion result and insert into buffer."
   (interactive)
-  (when ktn--current-headword
+  (when (ktn--headword-current)
     (ktn--kakutei-internal)))
 
 (defun ktn--kakutei-internal ()
-  (let* ((hw ktn--current-headword)
+  (let* ((hw (ktn--headword-current))
          (midasi (if (not (string-empty-p (ktn-headword-okuri-roma-first hw)))
                      (concat (ktn-headword-buffer hw) (ktn-headword-okuri-roma-first hw))
                    (ktn-headword-buffer hw)))
-         (base-text (if (ktn--mode-p 'converting)
+         (base-text (if (ktn--headword-mode-p 'converting)
                         (car (nth (ktn-headword-candidate-index hw) (ktn-headword-candidates hw)))
                       (concat (ktn-headword-buffer hw)
                               (ktn-headword-roma-buffer hw)
@@ -862,7 +883,7 @@ Each function is called with one argument: BASE-TEXT."
 
     (ktn--add-recent-history midasi)
 
-    (when (ktn--mode-p 'converting)
+    (when (ktn--headword-mode-p 'converting)
       (ktn--record-candidate-stat midasi base-text))
 
     (setf (ktn-headword-post-processor hw) nil)
@@ -877,11 +898,11 @@ Each function is called with one argument: BASE-TEXT."
   "Cancel current input sequence or return from converting to headword mode."
   (interactive)
   (cond
-   ((ktn--mode-p 'headword)
+   ((ktn--headword-mode-p 'headword)
     (ktn--cleanup-headword))
 
-   ((ktn--mode-p 'converting)
-    (let ((hw ktn--current-headword))
+   ((ktn--headword-mode-p 'converting)
+    (let ((hw (ktn--headword-current)))
       (setf (ktn-headword-mode hw) 'headword
             (ktn-headword-candidates hw) nil
             (ktn-headword-candidate-index hw) 0)
@@ -899,7 +920,7 @@ Each function is called with one argument: BASE-TEXT."
 (defun ktn-return-key-handler ()
   "RET / C-m 打鍵時の処理"
   (interactive)
-  (if (not ktn--current-headword)
+  (if (not (ktn--headword-current))
       (newline)
     (ktn-kakutei)
     (and ktn-newline-on-enter
@@ -909,12 +930,12 @@ Each function is called with one argument: BASE-TEXT."
   "TAB 打鍵時の処理。"
   (interactive)
   (cond
-   ((and ktn--current-headword
-         (ktn-headword-hassamu-active-p ktn--current-headword))
+   ((and (ktn--headword-current)
+         (ktn-headword-hassamu-active-p (ktn--headword-current)))
     (when (fboundp #'ktn--hassamu-accept-current)
       (ktn--hassamu-accept-current)))
 
-   ((ktn--mode-p 'headword)
+   ((ktn--headword-mode-p 'headword)
     (ktn--headword-completion 1))
 
    (t
@@ -924,9 +945,9 @@ Each function is called with one argument: BASE-TEXT."
   "Shift-TAB / backtab 打鍵時の処理。"
   (interactive)
   (cond
-   ((ktn--mode-p 'converting)
+   ((ktn--headword-mode-p 'converting)
     (ktn-previous-candidate))
-   ((ktn--mode-p 'headword)
+   ((ktn--headword-mode-p 'headword)
     (ktn--headword-completion -1))
    (t
     (insert "\t"))))
@@ -935,10 +956,11 @@ Each function is called with one argument: BASE-TEXT."
   "Delete character backward in headword mode or normal mode."
   (interactive)
   (cond
-   ((ktn--mode-p 'converting)
+   ((ktn--headword-mode-p 'converting)
     (ktn-quit))
-   ((ktn--mode-p 'headword)
-    (let ((hw ktn--current-headword))
+
+   ((ktn--headword-mode-p 'headword)
+    (let ((hw (ktn--headword-current)))
       (when (or (> (ktn-headword-completion-tab-count hw) 0)
                 (get-buffer ktn-candidate-buffer-name))
         (ktn--close-candidate-window)
