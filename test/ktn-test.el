@@ -110,12 +110,16 @@
  ("1/conversion/select-key"         "K a n j i SPC 1"                      "漢字")
  ("2/headword/backspace"            "K a k i C-h n j i SPC C-j"            "漢字")
  ("2/headword/completion"           "K a TAB C-j"                          "かんじ")
- ("3/conversion/okuri"              "S i T t a C-j"                        "知った")
+ ("3/conversion/okuri1"             "S i T t a C-j"                        "知った")
+ ("3/conversion/okuri2"             "A U C-j"                              "合う")
+ ("3/conversion/not-okuri1"         "K A n j i SPC C-j"                    "漢字") ; 大文字 `A' の扱い
+ ("3/conversion/not-okuri2"         "K A n J i C-j"                        "感じ") ; 大文字 `A' の扱い
  ("3/conversion/backspace"          "K a n j i SPC C-h q"                  "カンジ")
  ("3/conversion/kakutei-newline"    "K a n j i SPC RET s a"                "漢字\nさ")
  ("3/conversion/punctuation-comma"  "K a n j i , C-j"                      "漢字、")
  ("3/conversion/punctuation-period" "K a n j i . C-j"                      "漢字。")
  ("3/conversion/punctuation-quest"  "K a n j i ? C-j"                      "漢字？")
+ ("3/conversion/punctuation-wo"     "K a n j i w o C-j"                    "漢字を")
  ("3/conversion/bracket"            "K a n j i [ C-j"                      "「漢字」")
  ("3/conversion/page-navigation"    "K a n j i SPC SPC <next> <prior> C-j" "漢字")
  ("3/conversion/previous-candidate" "K a n j i SPC x C-j"                  "幹事")

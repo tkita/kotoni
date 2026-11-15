@@ -162,7 +162,7 @@
       (insert close-str)
       (goto-char (- (point) 1)))))
 
-(defun ktn--handle-punctuation-trigger (hw char-str)
+(defun ktn--handle-punctuation-trigger (hw char-str &optional start-henkan-fn)
   "CHAR-STR に対応する句読点プロセッサを設定して変換を開始する。"
   (let* ((res       (ktn--process-roma-input "" char-str))
          (punct-val (if (not (string-empty-p (car res)))
@@ -171,7 +171,9 @@
     (setf (ktn-headword-post-processor hw)
           #'(lambda (base)
               (concat base punct-val)))
-    (ktn-start-henkan)))
+    (if start-henkan-fn
+        (funcall start-henkan-fn)
+      (ktn-start-henkan))))
 
 (defun ktn--make-bracket-processor (open-str close-str)
   "BASE の前後に OPEN-STR と CLOSE-STR を付与するプロセッサを返す。"
@@ -208,6 +210,85 @@
     )
   "見出し語モード中における特殊キーとアクションの定義テーブル。")
 
+(defun ktn--roma-boundary-complete-p (hw)
+  "見出し語入力が大文字送り仮名開始可能な境界に到達しているか判定する。"
+  (let ((headword (ktn-headword-buffer hw))
+        (roma     (ktn-headword-roma-buffer hw)))
+    (and (not (string-empty-p headword))
+         (string-empty-p (ktn-headword-okuri-roma-first hw))
+         (or (string-empty-p roma)
+             ;; 「n」待ちの状態も境界完成として扱う
+             (and (= (length roma) 1)
+                  (string= roma "n"))))))
+
+(defun ktn--upper-should-start-okuri-p (hw)
+  "大文字入力を送り仮名開始にするか判定する。"
+  (and (not (string-empty-p (ktn-headword-buffer hw)))
+       (ktn--roma-boundary-complete-p hw)))
+
+(defun ktn--maybe-start-okuri (hw input-str &optional start-henkan-fn)
+  "大文字入力を、headword の有無に応じて
+- 既存の見出し語があれば送り仮名開始
+- まだ無ければ新規頭語入力として開始
+とみなす。"
+  (let ((has-headword (or (not (string-empty-p (ktn-headword-buffer hw)))
+                          (not (string-empty-p (ktn-headword-roma-buffer hw))))))
+    (if has-headword
+        ;; 既に見出し語があるなら、送り仮名開始
+        (progn
+          (when (string-suffix-p "n" (ktn-headword-buffer hw))
+            (setf (ktn-headword-buffer hw)
+                  (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
+
+          (let ((res (ktn--process-roma-input "" input-str)))
+            (setf (ktn-headword-okuri-roma-first  hw) input-str
+                  (ktn-headword-okuri-buffer      hw) (car res)
+                  (ktn-headword-okuri-roma-buffer hw) (cdr res))
+            (when (and (string-empty-p (ktn-headword-okuri-roma-buffer hw))
+                       (not (string-empty-p (ktn-headword-okuri-buffer hw)))
+                       start-henkan-fn)
+              (funcall start-henkan-fn)))
+          (ktn--update-inline-display))
+
+      ;; 見出し語がまだ無ければ、頭語入力として扱う
+      (let ((res (ktn--process-roma-input "" input-str)))
+        (setf (ktn-headword-buffer hw) (car res)
+              (ktn-headword-roma-buffer hw) (cdr res))
+        (ktn--update-inline-display)))))
+
+
+;;  見出し語入力モード
+;;   |  headword = "" / roma = ""
+;;   |     a-z  -> 見出し語入力開始
+;;   |     A-Z  -> 変換境界未完了なら小文字として扱う
+;;   |             -> 変換境界完了なら送り仮名開始
+;;   |
+;;   |  headword != "" / roma = ""
+;;   |     a-z  -> 見出し語を続ける
+;;   |     A-Z  -> 送り仮名開始（例: A U -> 「合う」）
+;;   |             -> ただし境界未完了なら小文字として扱う
+;;   |
+;;   |  headword != "" / roma = "n" などの終端待ち状態
+;;   |     A-Z  -> 「n」完了とみなし、送り仮名開始
+;;   |             例: K a n J i -> 「感じ」
+;;   |
+;;   |  送り仮名入力中
+;;   |     a-z  -> 送り仮名を蓄積
+;;   |     送り仮名が確定したら start-henkan-fn を実行
+
+;; 重要ルール:
+;;   - 大文字入力は「送り仮名開始」ではなく、「変換境界が成立したときだけ」送り仮名開始とする。
+;;   - 変換境界が未成立な大文字は、小文字として扱う。
+;;       例: S A  -> S a と同義
+;;   - "n" のような終端規則を満たす入力は、次の大文字を送り仮名開始にする。
+;;       例: K a n J i -> 「感じ」
+
+;;  代表ケース:
+;;   - S i R u  -> u で変換開始 -> 「知る」
+;;   - A U      -> U で送り仮名開始 -> 「合う」
+;;   - S A      -> A は小文字扱い -> S a と同義
+;;   - K a n J i -> n 完了後の J が送り仮名開始 -> 「感じ」
+
 (defun ktn--handle-headword-mode (ch &optional start-henkan-fn)
   "見出し語入力モードでの入力処理。"
   (unless ktn--current-headword
@@ -220,7 +301,10 @@
          (is-alpha  (ktn--lower-case-p lower-ch))
          (input-ch  (if is-alpha lower-ch ch-int))
          (input-str (ktn--safe-char-to-string input-ch))
+         (is-wo     (and (string= (ktn-headword-roma-buffer hw) "w")
+                         (string= input-str "o")))
          (action    (cdr (assq ch-int ktn-headword-action-table))))
+
     (ktn--reset-completion hw)
 
     (cond
@@ -228,22 +312,18 @@
      (action
       (funcall action hw))
 
-     ;; 大文字入力: 送り仮名の開始
+     ;; 送り仮名開始の条件のみ満たす大文字
+     ((and is-upper
+           (ktn--upper-should-start-okuri-p hw))
+      (ktn--maybe-start-okuri hw input-str start-henkan-fn))
+
+     ;; 大文字は「まだ変換境界前なら小文字として扱う」
      (is-upper
-      (when (not (string-empty-p (ktn-headword-roma-buffer hw)))
-        (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) "")))
-          (setf (ktn-headword-buffer hw)
-                (concat (ktn-headword-buffer hw) (car res))
-                (ktn-headword-roma-buffer hw) (cdr res))))
-
-      (when (string-suffix-p "n" (ktn-headword-buffer hw))
+      (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) input-str)))
         (setf (ktn-headword-buffer hw)
-              (concat (substring (ktn-headword-buffer hw) 0 -1) "ん")))
-
-      (let ((res (ktn--process-roma-input "" input-str)))
-        (setf (ktn-headword-okuri-roma-first  hw) input-str
-              (ktn-headword-okuri-buffer      hw) (car res)
-              (ktn-headword-okuri-roma-buffer hw) (cdr res))))
+              (concat (ktn-headword-buffer hw) (car res))
+              (ktn-headword-roma-buffer hw) (cdr res))
+        (ktn--update-inline-display)))
 
      ;; 送り仮名入力中
      ((not (string-empty-p (ktn-headword-okuri-roma-first hw)))
@@ -256,6 +336,11 @@
                    (not (string-empty-p (ktn-headword-okuri-buffer hw)))
                    start-henkan-fn)
           (funcall start-henkan-fn))))
+
+     ;; 先に `w o' 「を」の特別処理
+     (is-wo
+      (setf (ktn-headword-roma-buffer hw) "")
+      (ktn--handle-punctuation-trigger hw "を" start-henkan-fn))
 
      ;; 通常の見出し語入力
      (t
