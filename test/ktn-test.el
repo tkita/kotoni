@@ -181,6 +181,33 @@
             (global-set-key key old)
           (global-unset-key key))))))
 
+(ert-deftest fsm/roma-boundary-edges ()
+  ;; 1) "n" を待つ境界: 次の音が子音なら "ん" を確定
+  (should (equal (ktn--process-roma-input "" "n")
+                 (cons "" "n")))
+  (should (equal (ktn--process-roma-input "n" "k")
+                 (cons "ん" "k")))
+
+  ;; 2) 「っ」促音の境界: 同一子音が連続したとき
+  (should (equal (ktn--process-roma-input "s" "s")
+                 (cons "っ" "s")))
+
+  ;; 3) 「を」への特別分岐
+  (should (equal (ktn--process-roma-input "w" "o")
+                 (cons "を" "")))
+
+  ;; 4) 母音接続で確定する通常境界
+  (should (equal (ktn--process-roma-input "n" "a")
+                 (cons "な" "")))
+
+  ;; 5) 進行中のローマ字が残るときは維持する
+  (should (equal (ktn--process-roma-input "k" "a")
+                 (cons "か" "")))
+
+  ;; 6) 未確定の状態は未処理文字列として残す
+  (should (equal (ktn--process-roma-input "t" "y")
+                 (cons "" "ty"))))
+
 (provide 'ktn-test)
 
 ;;; ktn-test.el ends here

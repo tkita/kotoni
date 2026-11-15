@@ -61,6 +61,38 @@
   (setq ktn--current-headword nil)
   (setq ktn--normal-roma-buffer ""))
 
+(defun ktn--normalize-input-event (ch)
+  "入力 CH を安全に正規化して、文字コードと小文字化情報を返す。
+戻り値: (list :ch-int :upper-p :lower-ch :alpha-p :string)"
+  (let* ((ch-int   (ktn--to-char-int ch))
+         (is-upper (ktn--upper-case-p ch-int))
+         (lower-ch (if is-upper (+ ch-int 32) ch-int))
+         (is-alpha (ktn--lower-case-p lower-ch))
+         (input-ch (if is-alpha lower-ch ch-int))
+         (char-str (ktn--safe-char-to-string input-ch)))
+    (list :ch-int ch-int
+          :upper-p is-upper
+          :lower-ch lower-ch
+          :alpha-p is-alpha
+          :string char-str)))
+
+(defun ktn--apply-roma-to-headword (hw input-str)
+  "HW の headword/roma バッファに INPUT-STR を反映する。
+返り値は (cons headword-text roma-remaining) で、外側の処理で使う。"
+  (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) input-str)))
+    (setf (ktn-headword-buffer hw)
+          (concat (ktn-headword-buffer hw) (car res))
+          (ktn-headword-roma-buffer hw) (cdr res))
+    res))
+
+(defun ktn--apply-roma-to-okuri (hw input-str)
+  "HW の okuri/okuri-roma バッファに INPUT-STR を反映する。"
+  (let ((res (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) input-str)))
+    (setf (ktn-headword-okuri-buffer hw)
+          (concat (ktn-headword-okuri-buffer hw) (car res))
+          (ktn-headword-okuri-roma-buffer hw) (cdr res))
+    res))
+
 (defun ktn--to-char-int (ch)
   "入力文字 CH を安全に整数文字コードに変換する。"
   (cl-typecase ch
@@ -124,24 +156,21 @@
 
 (defun ktn--handle-normal-mode (ch)
   "通常モード時の入力処理"
-  (let* ((ch-int   (ktn--to-char-int ch))
-         (is-upper (ktn--upper-case-p ch-int))
-         (lower-ch (if is-upper (+ ch-int 32) ch-int))
-         (is-alpha (ktn--lower-case-p lower-ch)))
+  (let* ((info     (ktn--normalize-input-event ch))
+         (is-upper (plist-get info :upper-p))
+         (char-str (plist-get info :string)))
     (cond
      ;; 大文字入力: 見出し語モード（▽）へ遷移
      (is-upper
       (setq ktn--normal-roma-buffer "")
       (ktn--start-headword-mode)
-      (let* ((char-str (ktn--safe-char-to-string lower-ch))
-             (res      (ktn--process-roma-input "" char-str)))
+      (let* ((res (ktn--process-roma-input "" char-str)))
         (setf (ktn-headword-buffer ktn--current-headword) (car res)
               (ktn-headword-roma-buffer ktn--current-headword) (cdr res))))
 
      ;; 通常の文字入力
      (t
-      (let* ((char-str (ktn--safe-char-to-string (if is-alpha lower-ch ch-int)))
-             (res      (ktn--process-roma-input ktn--normal-roma-buffer char-str)))
+      (let* ((res (ktn--process-roma-input ktn--normal-roma-buffer char-str)))
         (setq ktn--normal-roma-buffer (cdr res))
         (unless (string-empty-p (car res))
           (insert (car res))
@@ -289,22 +318,15 @@
 ;;   - S A      -> A は小文字扱い -> S a と同義
 ;;   - K a n J i -> n 完了後の J が送り仮名開始 -> 「感じ」
 
-(defun ktn--handle-headword-mode (ch &optional start-henkan-fn)
-  "見出し語入力モードでの入力処理。"
-  (unless ktn--current-headword
-    (ktn--start-headword-mode))
-
-  (let* ((hw        ktn--current-headword)
-         (ch-int    (ktn--to-char-int ch))
-         (is-upper  (ktn--upper-case-p ch-int))
-         (lower-ch  (if is-upper (+ ch-int 32) ch-int))
-         (is-alpha  (ktn--lower-case-p lower-ch))
-         (input-ch  (if is-alpha lower-ch ch-int))
-         (input-str (ktn--safe-char-to-string input-ch))
+(defun ktn--dispatch-headword-key (hw ch &optional start-henkan-fn)
+  "見出し語モードでの入力イベントを分岐処理する。"
+  (let* ((info      (ktn--normalize-input-event ch))
+         (ch-int    (plist-get info :ch-int))
+         (is-upper  (plist-get info :upper-p))
+         (input-str (plist-get info :string))
          (is-wo     (and (string= (ktn-headword-roma-buffer hw) "w")
                          (string= input-str "o")))
          (action    (cdr (assq ch-int ktn-headword-action-table))))
-
     (ktn--reset-completion hw)
 
     (cond
@@ -319,19 +341,12 @@
 
      ;; 大文字は「まだ変換境界前なら小文字として扱う」
      (is-upper
-      (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) input-str)))
-        (setf (ktn-headword-buffer hw)
-              (concat (ktn-headword-buffer hw) (car res))
-              (ktn-headword-roma-buffer hw) (cdr res))
+      (let ((res (ktn--apply-roma-to-headword hw input-str)))
         (ktn--update-inline-display)))
 
      ;; 送り仮名入力中
      ((not (string-empty-p (ktn-headword-okuri-roma-first hw)))
-      (let ((res (ktn--process-roma-input (ktn-headword-okuri-roma-buffer hw) input-str)))
-        (setf (ktn-headword-okuri-buffer      hw)
-              (concat (ktn-headword-okuri-buffer hw) (car res))
-              (ktn-headword-okuri-roma-buffer hw) (cdr res))
-
+      (let ((res (ktn--apply-roma-to-okuri hw input-str)))
         (when (and (string-empty-p (ktn-headword-okuri-roma-buffer hw))
                    (not (string-empty-p (ktn-headword-okuri-buffer hw)))
                    start-henkan-fn)
@@ -344,11 +359,13 @@
 
      ;; 通常の見出し語入力
      (t
-      (let ((res (ktn--process-roma-input (ktn-headword-roma-buffer hw) input-str)))
-        (setf (ktn-headword-buffer      hw)
-              (concat (ktn-headword-buffer hw) (car res))
-              (ktn-headword-roma-buffer hw) (cdr res)))))))
+      (ktn--apply-roma-to-headword hw input-str)))))
 
+(defun ktn--handle-headword-mode (ch &optional start-henkan-fn)
+  "見出し語入力モードでの入力処理。"
+  (unless ktn--current-headword
+    (ktn--start-headword-mode))
+  (ktn--dispatch-headword-key ktn--current-headword ch start-henkan-fn))
 
 ;;;
 ;;; Converting モード
